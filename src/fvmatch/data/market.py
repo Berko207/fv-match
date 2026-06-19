@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from fvmatch.data.store import Store
 
@@ -29,8 +29,6 @@ def capture_closing_lines(store: Store, fixture_id: int | str) -> int:
     raise NotImplementedError("market.capture_closing_lines is a Phase 0 stub")
 
 
-def get_closing_price(
-    store: Store, market_id: int | str, outcome: str
-) -> float | None:
+def get_closing_price(store: Store, market_id: int | str, outcome: str) -> float | None:
     """Return the captured closing price for CLV accounting."""
     raise NotImplementedError("market.get_closing_price is a Phase 0 stub")

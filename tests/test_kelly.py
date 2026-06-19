@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import math
 
-import pytest
-
 from fvmatch.edge.kelly import Leg, fractional_kelly, joint_match_stakes, kelly_fraction
 
 

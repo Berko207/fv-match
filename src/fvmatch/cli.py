@@ -57,7 +57,9 @@ def paper(
     Phase 0: STUB.
     """
     if settings.dry_run:
-        typer.echo(f"[DRY_RUN] Would run paper cycle for {competition} (+{hours_ahead}h)")
+        typer.echo(
+            f"[DRY_RUN] Would run paper cycle for {competition} (+{hours_ahead}h)"
+        )
     else:
         raise NotImplementedError("paper not implemented in Phase 0")
 
