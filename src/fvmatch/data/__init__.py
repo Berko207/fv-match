@@ -1,0 +1,1 @@
+"""Data layer: Supabase persistence + ingest stubs."""
