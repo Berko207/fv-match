@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np  # type: ignore[import-not-found]  # for matrix typing in stub
+import numpy as np
 
 
 def fit(

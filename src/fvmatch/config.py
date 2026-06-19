@@ -20,13 +20,25 @@ class Settings(BaseSettings):
     )
 
     supabase_url: str = Field(default="", description="Supabase project URL")
-    supabase_service_key: str = Field(default="", description="Supabase service role key")
-    football_data_api_key: str = Field(default="", description="API key for historical data provider")
+    supabase_service_key: str = Field(
+        default="", description="Supabase service role key"
+    )
+    football_data_api_key: str = Field(
+        default="", description="API key for historical data provider"
+    )
     dry_run: bool = Field(default=True, description="If True, never place real orders")
-    model_version: str = Field(default="v0", description="Model version tag for model_probs")
-    edge_threshold: float = Field(default=0.03, description="Min edge (p - price) to consider bet")
-    kelly_fraction: float = Field(default=0.25, description="Fractional Kelly multiplier")
-    kelly_cap: float = Field(default=0.05, description="Max bankroll fraction per match (total exposure)")
+    model_version: str = Field(
+        default="v0", description="Model version tag for model_probs"
+    )
+    edge_threshold: float = Field(
+        default=0.03, description="Min edge (p - price) to consider bet"
+    )
+    kelly_fraction: float = Field(
+        default=0.25, description="Fractional Kelly multiplier"
+    )
+    kelly_cap: float = Field(
+        default=0.05, description="Max bankroll fraction per match (total exposure)"
+    )
 
 
 settings = Settings()

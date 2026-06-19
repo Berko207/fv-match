@@ -7,7 +7,6 @@ Used after de-vig to size bets only on positive edge.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 
 @dataclass(frozen=True)

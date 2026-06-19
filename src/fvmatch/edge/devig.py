@@ -59,7 +59,7 @@ def power(prices: list[float], tol: float = 1e-10, max_iter: int = 100) -> list[
     lo, hi = 0.1, 10.0
     for _ in range(max_iter):
         mid = (lo + hi) / 2.0
-        val = sum(ri ** mid for ri in r)
+        val = sum(ri**mid for ri in r)
         if abs(val - 1.0) < tol:
             break
         if val > 1.0:
@@ -67,7 +67,7 @@ def power(prices: list[float], tol: float = 1e-10, max_iter: int = 100) -> list[
         else:
             hi = mid
     k = (lo + hi) / 2.0
-    probs = [ri ** k for ri in r]
+    probs = [ri**k for ri in r]
     total = sum(probs)
     if total == 0:
         return [0.0] * len(prices)

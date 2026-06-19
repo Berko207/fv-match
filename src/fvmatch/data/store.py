@@ -13,8 +13,8 @@ from uuid import UUID
 try:
     from supabase import Client, create_client
 except ImportError:  # pragma: no cover
-    Client = Any  # type: ignore[misc, assignment]
-    create_client = None  # type: ignore[assignment]
+    Client = Any
+    create_client = None
 
 
 class FixtureRow(TypedDict, total=False):
@@ -87,9 +87,7 @@ class Store:
         """Bulk upsert fixtures. Used by backfill and live polling."""
         raise NotImplementedError("Phase 0 stub")
 
-    def upsert_team_ratings(
-        self, rows: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def upsert_team_ratings(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Store Elo / other ratings with as_of timestamp."""
         raise NotImplementedError("Phase 0 stub")
 
@@ -103,9 +101,7 @@ class Store:
         """Time-series snapshots. is_close=True for closing line capture."""
         raise NotImplementedError("Phase 0 stub")
 
-    def insert_model_probs(
-        self, rows: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def insert_model_probs(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Store model H/D/A + full scoreline_matrix (jsonb)."""
         raise NotImplementedError("Phase 0 stub")
 
@@ -131,8 +127,6 @@ class Store:
         """Query fixtures ready for modeling (with teams, ratings joined)."""
         raise NotImplementedError("Phase 0 stub")
 
-    def get_live_markets(
-        self, hours_ahead: int = 48
-    ) -> list[dict[str, Any]]:
+    def get_live_markets(self, hours_ahead: int = 48) -> list[dict[str, Any]]:
         """Upcoming fixtures + latest (non-close) market snapshots."""
         raise NotImplementedError("Phase 0 stub")
