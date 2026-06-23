@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --bg: #0a0e12;
+  --card: #12171d;
+  --border: #2a323d;
+  --text: #e8edf3;
+  --muted: #8b98a8;
+  --accent: #34d399;
+  --accent-dim: #059669;
+  --danger: #f87171;
+  --warning: #fbbf24;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(52, 211, 153, 0.12), transparent),
+    radial-gradient(circle at 100% 0%, rgba(59, 130, 246, 0.06), transparent 40%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+}
+
+input,
+select,
+button {
+  font: inherit;
+}
+
+@layer utilities {
+  .glass {
+    background: rgba(18, 23, 29, 0.72);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
