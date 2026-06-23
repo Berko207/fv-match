@@ -151,3 +151,11 @@ supabase/.env
 *.pkl
 *.model
 artifacts/
+
+# Next.js web app
+web/node_modules/
+web/.next/
+web/out/
+web/.vercel/
+.vercel/
+.vercel

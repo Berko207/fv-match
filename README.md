@@ -64,6 +64,19 @@ is the default for sparse international fixtures (e.g. World Cup matches).
 > real results (and validate positive CLV) before risking live capital. `DRY_RUN=true`
 > by default — no path places a real order until `DRY_RUN=false` after CLV validation.
 
+## Web UI (Vercel)
+
+A Next.js dashboard lives in `web/` — same Dixon-Coles + Elo pipeline ported to TypeScript for edge deployment (no Python/scipy on serverless).
+
+```bash
+cd web
+npm install
+npm run dev    # http://localhost:3000
+npm run build  # production check
+```
+
+Deploy: `vercel deploy --prod` from `web/` (Vercel project: **fv-match**, root directory `web/`). Pushes to `main` on `Berko207/fv-match` auto-deploy to production via the GitHub integration.
+
 ## Dev
 
 - Lint: `uv run ruff check . && uv run ruff format --check .`
