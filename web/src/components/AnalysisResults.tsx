@@ -1,5 +1,7 @@
 import type { MatchAnalysis, OutcomeView } from "@/core/engine";
 
+import { ColumnHelp } from "@/components/ColumnHelp";
+
 interface AnalysisResultsProps {
   analysis: MatchAnalysis;
 }
@@ -114,7 +116,7 @@ export function AnalysisResults({ analysis }: AnalysisResultsProps) {
         <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
           Model vs Market
         </h3>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto pb-1 pt-8">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
@@ -214,27 +216,12 @@ function ColumnHeader({
   return (
     <th className={`pb-3 pr-3 last:pr-0 ${align === "right" ? "text-right" : ""}`}>
       <span
-        className={`inline-flex max-w-full items-center gap-1 ${
+        className={`inline-flex max-w-full items-center gap-1.5 ${
           align === "right" ? "justify-end" : ""
         }`}
       >
         <span>{label}</span>
-        <span
-          aria-label={help}
-          className="group relative inline-flex shrink-0 cursor-help outline-none"
-          role="note"
-          tabIndex={0}
-        >
-          <span
-            aria-hidden="true"
-            className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-slate-500/45 text-[0.55rem] font-bold leading-none text-slate-400 transition group-hover:border-emerald-400/65 group-hover:bg-emerald-500/10 group-hover:text-emerald-200 group-focus-visible:border-emerald-400/65 group-focus-visible:bg-emerald-500/10 group-focus-visible:text-emerald-200"
-          >
-            ?
-          </span>
-          <span className="pointer-events-none absolute bottom-[calc(100%+0.35rem)] left-1/2 z-20 w-max max-w-[13rem] -translate-x-1/2 translate-y-1 rounded-md border border-slate-500/25 bg-[#080c10f5] px-2 py-1.5 text-left text-[0.68rem] font-normal normal-case tracking-normal text-slate-200 opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.35)] transition duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100">
-            {help}
-          </span>
-        </span>
+        <ColumnHelp help={help} />
       </span>
     </th>
   );
