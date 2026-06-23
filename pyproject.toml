@@ -11,6 +11,9 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic-settings>=2.0",
     "typer[all]>=0.9.0",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +41,7 @@ target-version = "py312"
 lint.select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
 lint.ignore = ["E501"]  # line length handled by formatter
 lint.isort.known-first-party = ["fvmatch"]
+lint.flake8-bugbear.extend-immutable-calls = ["typer.Option", "typer.Argument"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -61,7 +65,8 @@ module = [
     "supabase",
     "pydantic_settings.*",
     "typer.*",
-    "numpy",
+    "scipy",
+    "scipy.*",
 ]
 ignore_missing_imports = true
 
