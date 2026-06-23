@@ -18,7 +18,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from fvmatch.config import settings
-from fvmatch.engine import MatchAnalysis, analyze_match
+from fvmatch.engine import MatchAnalysis, analyze_live_match, analyze_match
+from fvmatch.model.live import LiveState
 
 app = typer.Typer(
     name="fvmatch",
@@ -45,6 +46,16 @@ def render_analysis(analysis: MatchAnalysis) -> None:
         f"Model xG  {analysis.expected_home_goals:.2f} – "
         f"{analysis.expected_away_goals:.2f}"
     )
+    if analysis.live_state is not None:
+        ls = analysis.live_state
+        header += (
+            f"\n[bold cyan]LIVE[/bold cyan]  {ls.minute:.0f}'  "
+            f"score {ls.home_goals}-{ls.away_goals}"
+        )
+        if ls.red_cards_home or ls.red_cards_away:
+            header += (
+                f"  ·  reds {ls.red_cards_home}-{ls.red_cards_away}"
+            )
     console.print(Panel(header, title="fv-match", expand=False))
 
     table = Table(title="Model vs Market", show_lines=False)
@@ -163,6 +174,92 @@ def analyze(
             "home": analysis.home,
             "away": analysis.away,
             "neutral": analysis.neutral,
+            "elo": {"home": analysis.elo_home, "away": analysis.elo_away},
+            "expected_goals": {
+                "home": analysis.expected_home_goals,
+                "away": analysis.expected_away_goals,
+            },
+            "model_probs": {
+                "home": analysis.p_home,
+                "draw": analysis.p_draw,
+                "away": analysis.p_away,
+            },
+            "overround": analysis.overround,
+            "outcomes": [
+                {
+                    "outcome": o.outcome,
+                    "model_p": o.model_p,
+                    "fair_odds": o.fair_odds,
+                    "market_odds": o.market_odds,
+                    "consensus_p": o.consensus_p,
+                    "edge": o.edge,
+                    "ev_per_dollar": o.ev_per_dollar,
+                    "stake_usd": o.stake_usd,
+                    "bet": o.bet,
+                }
+                for o in analysis.outcomes
+            ],
+            "top_scorelines": [
+                {"home": i, "away": j, "p": p} for i, j, p in analysis.top_scorelines
+            ],
+            "dry_run": analysis.dry_run,
+        }
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        render_analysis(analysis)
+
+
+@app.command("analyze-live")
+def analyze_live(
+    home: str = typer.Option(..., help="Home (or first) team name"),
+    away: str = typer.Option(..., help="Away (or second) team name"),
+    minute: float = typer.Option(..., help="Elapsed match minutes (0–90+)"),
+    home_goals: int = typer.Option(0, "--home-goals", help="Home goals scored"),
+    away_goals: int = typer.Option(0, "--away-goals", help="Away goals scored"),
+    red_home: int = typer.Option(0, "--red-home", help="Red cards for home team"),
+    red_away: int = typer.Option(0, "--red-away", help="Red cards for away team"),
+    home_odds: float | None = typer.Option(None, help="Decimal odds for home win"),
+    draw_odds: float | None = typer.Option(None, help="Decimal odds for draw"),
+    away_odds: float | None = typer.Option(None, help="Decimal odds for away win"),
+    home_field: bool = typer.Option(
+        False, "--home-field", help="Apply home advantage (default: neutral venue)"
+    ),
+    elo_home: float | None = typer.Option(None, help="Override home Elo rating"),
+    elo_away: float | None = typer.Option(None, help="Override away Elo rating"),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
+) -> None:
+    """In-play fair-value analysis: conditional model probs vs market edge + stakes."""
+    state = LiveState(
+        minute=minute,
+        home_goals=home_goals,
+        away_goals=away_goals,
+        red_cards_home=red_home,
+        red_cards_away=red_away,
+    )
+    analysis = analyze_live_match(
+        home=home,
+        away=away,
+        state=state,
+        home_odds=home_odds,
+        draw_odds=draw_odds,
+        away_odds=away_odds,
+        neutral=not home_field,
+        elo_home=elo_home,
+        elo_away=elo_away,
+    )
+
+    if json_out:
+        payload = {
+            "home": analysis.home,
+            "away": analysis.away,
+            "neutral": analysis.neutral,
+            "live": {
+                "minute": state.minute,
+                "home_goals": state.home_goals,
+                "away_goals": state.away_goals,
+                "red_cards_home": state.red_cards_home,
+                "red_cards_away": state.red_cards_away,
+            },
             "elo": {"home": analysis.elo_home, "away": analysis.elo_away},
             "expected_goals": {
                 "home": analysis.expected_home_goals,

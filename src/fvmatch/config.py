@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     max_goals: int = Field(
         default=10, description="Max goals per side in the scoreline matrix"
     )
+    live_intensity_profile: str = Field(
+        default="rising",
+        description="In-play goal-rate profile: uniform | rising",
+    )
 
     # --- Risk / accounting ---
     bankroll: float = Field(
