@@ -1,0 +1,18 @@
+[
+  {
+    "outcome": "home",
+    "stake": 35.54,
+    "entry_price": 0.781,
+    "close_price": 0.80,
+    "model_p": 0.812,
+    "fixture_result": {"home_goals": 3, "away_goals": 0}
+  },
+  {
+    "outcome": "home",
+    "stake": 20.0,
+    "entry_price": 0.74,
+    "close_price": 0.72,
+    "model_p": 0.78,
+    "fixture_result": {"home_goals": 1, "away_goals": 1}
+  }
+]

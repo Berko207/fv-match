@@ -55,6 +55,42 @@ class Settings(BaseSettings):
         default=0.05, description="Max bankroll fraction per match (total exposure)"
     )
 
+    # --- Model (Dixon-Coles + Elo prior) parameters ---
+    base_goals: float = Field(
+        default=2.6,
+        description="Baseline expected total goals for an evenly-matched fixture",
+    )
+    elo_goal_scale: float = Field(
+        default=150.0,
+        description="Elo points per 1 goal of expected supremacy (lower = bigger edge)",
+    )
+    home_advantage_elo: float = Field(
+        default=65.0,
+        description="Elo points added to the home team (0 for neutral venues)",
+    )
+    dc_rho: float = Field(
+        default=-0.08,
+        description="Dixon-Coles low-score correlation parameter (typically negative)",
+    )
+    dc_decay: float = Field(
+        default=0.003, description="Per-day time-decay weight for Dixon-Coles fit"
+    )
+    max_goals: int = Field(
+        default=10, description="Max goals per side in the scoreline matrix"
+    )
+
+    # --- Risk / accounting ---
+    bankroll: float = Field(
+        default=1000.0, description="Bankroll in USD used to convert stake fractions"
+    )
+    min_liquidity_usd: float = Field(
+        default=5000.0,
+        description="Minimum market liquidity to clear the liquidity gate",
+    )
+    devig_method: str = Field(
+        default="shin", description="De-vig method: multiplicative | power | shin"
+    )
+
     # --- Polymarket CLOB V2 (global crypto-native stack) ---
     polymarket_clob_host: str = Field(default=CLOB_HOST, description="CLOB V2 API host")
     polymarket_gamma_host: str = Field(
@@ -109,6 +145,11 @@ class Settings(BaseSettings):
         if v.startswith("0x") or v.startswith("0X"):
             return v[2:]
         return v
+
+    @property
+    def has_supabase(self) -> bool:
+        """True when Supabase credentials are configured."""
+        return bool(self.supabase_url and self.supabase_service_key)
 
     def polymarket_execution_ready(self) -> bool:
         """True when config has minimum credentials for live CLOB trading."""

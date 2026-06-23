@@ -1,0 +1,26 @@
+[
+  {
+    "home": "Portugal",
+    "away": "Uzbekistan",
+    "home_odds": 1.28,
+    "draw_odds": 6.0,
+    "away_odds": 12.0,
+    "neutral": true
+  },
+  {
+    "home": "Argentina",
+    "away": "Saudi Arabia",
+    "home_odds": 1.35,
+    "draw_odds": 5.0,
+    "away_odds": 9.5,
+    "neutral": true
+  },
+  {
+    "home": "USA",
+    "away": "Mexico",
+    "home_odds": 2.6,
+    "draw_odds": 3.2,
+    "away_odds": 2.8,
+    "neutral": true
+  }
+]
