@@ -8,6 +8,18 @@ Estimates home/draw/away (and full scoreline) probabilities, de-viggs market pri
 
 See `CLAUDE.md` for pipeline, invariants, and module map.
 
+## Project layout
+
+| Path | Purpose |
+|------|---------|
+| `src/fvmatch/` | Python engine + Typer CLI |
+| `tests/` | Pytest suite (CI) |
+| `examples/` | Sample JSON for `fit` / `paper` / `report` |
+| `supabase/` | Postgres schema migrations |
+| `web/` | Next.js dashboard (Vercel deploy root) |
+
+Local-only artifacts (gitignored): `.venv/`, `web/node_modules/`, `web/.next/`, cache dirs.
+
 ## Quick start
 
 ```bash
