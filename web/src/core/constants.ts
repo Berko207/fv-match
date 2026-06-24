@@ -10,6 +10,7 @@ export const DEFAULT_CONFIG = {
   bankroll: 1000,
   devigMethod: "shin" as const,
   dryRun: true,
+  liveIntensityProfile: "rising" as const,
 };
 
 export const OUTCOMES = ["home", "draw", "away"] as const;

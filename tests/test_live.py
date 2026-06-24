@@ -78,9 +78,7 @@ def test_matrix_invariants_no_nans() -> None:
 def test_red_card_away_boosts_home_remaining_rate() -> None:
     lam_home, lam_away = _fixture_lambdas()
     base = LiveState(minute=60.0, home_goals=0, away_goals=0)
-    with_red = LiveState(
-        minute=60.0, home_goals=0, away_goals=0, red_cards_away=1
-    )
+    with_red = LiveState(minute=60.0, home_goals=0, away_goals=0, red_cards_away=1)
     p_base = live_hda(lam_home, lam_away, base, intensity_profile="uniform")
     p_red = live_hda(lam_home, lam_away, with_red, intensity_profile="uniform")
     assert p_red[0] > p_base[0]

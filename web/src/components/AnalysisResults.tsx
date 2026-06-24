@@ -92,10 +92,20 @@ export function AnalysisResults({ analysis }: AnalysisResultsProps) {
                 {analysis.expectedAwayGoals.toFixed(2)}
                 <span className="mx-2">·</span>
                 {analysis.neutral ? "Neutral" : "Home advantage"}
+                {analysis.liveState ? (
+                  <>
+                    <span className="mx-2">·</span>
+                    <span className="text-cyan-300">
+                      LIVE {analysis.liveState.minute}&apos;{" "}
+                      {analysis.liveState.homeGoals}-{analysis.liveState.awayGoals}
+                    </span>
+                  </>
+                ) : null}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Badge tone="safe">DRY RUN</Badge>
+              {analysis.liveState ? <Badge tone="live">IN-PLAY</Badge> : null}
               {analysis.overround != null && (
                 <Badge tone="warn">
                   Overround {(analysis.overround * 100).toFixed(1)}%
@@ -360,12 +370,14 @@ function Badge({
   tone,
 }: {
   children: React.ReactNode;
-  tone: "safe" | "warn";
+  tone: "safe" | "warn" | "live";
 }) {
   const styles =
     tone === "safe"
       ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-      : "border-amber-500/30 bg-amber-500/10 text-amber-200";
+      : tone === "live"
+        ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-200"
+        : "border-amber-500/30 bg-amber-500/10 text-amber-200";
 
   return (
     <span

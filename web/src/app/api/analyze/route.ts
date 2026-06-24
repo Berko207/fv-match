@@ -5,8 +5,17 @@ import { analyzeMatch } from "@/core/engine";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { home, away, homeOdds, drawOdds, awayOdds, neutral, eloHome, eloAway } =
-      body ?? {};
+    const {
+      home,
+      away,
+      homeOdds,
+      drawOdds,
+      awayOdds,
+      neutral,
+      eloHome,
+      eloAway,
+      liveState,
+    } = body ?? {};
 
     if (!home || !away) {
       return NextResponse.json(
@@ -24,6 +33,7 @@ export async function POST(request: Request) {
       neutral: neutral !== false,
       eloHome: eloHome != null ? Number(eloHome) : null,
       eloAway: eloAway != null ? Number(eloAway) : null,
+      liveState: liveState ?? null,
     });
 
     return NextResponse.json(analysis);

@@ -12,6 +12,12 @@ export interface MatchFormValues {
   drawOdds: string;
   awayOdds: string;
   neutral: boolean;
+  inPlay: boolean;
+  minute: string;
+  homeGoals: string;
+  awayGoals: string;
+  redHome: string;
+  redAway: string;
 }
 
 interface MatchFormProps {
@@ -176,6 +182,74 @@ export function MatchForm({
             onChange={(e) => update("awayOdds", e.target.value)}
           />
         </Field>
+      </div>
+
+      <div className="mt-5 rounded-xl border border-[var(--border)] bg-black/20 p-4">
+        <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+          <input
+            checked={values.inPlay}
+            className="accent-cyan-400"
+            type="checkbox"
+            onChange={(e) => update("inPlay", e.target.checked)}
+          />
+          In-play mode
+        </label>
+        {values.inPlay ? (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <Field label="Minute">
+              <input
+                className="field"
+                inputMode="decimal"
+                min="0"
+                max="120"
+                step="1"
+                type="number"
+                value={values.minute}
+                onChange={(e) => update("minute", e.target.value)}
+              />
+            </Field>
+            <Field label="Home goals">
+              <input
+                className="field"
+                inputMode="numeric"
+                min="0"
+                type="number"
+                value={values.homeGoals}
+                onChange={(e) => update("homeGoals", e.target.value)}
+              />
+            </Field>
+            <Field label="Away goals">
+              <input
+                className="field"
+                inputMode="numeric"
+                min="0"
+                type="number"
+                value={values.awayGoals}
+                onChange={(e) => update("awayGoals", e.target.value)}
+              />
+            </Field>
+            <Field label="Red cards (H)">
+              <input
+                className="field"
+                inputMode="numeric"
+                min="0"
+                type="number"
+                value={values.redHome}
+                onChange={(e) => update("redHome", e.target.value)}
+              />
+            </Field>
+            <Field label="Red cards (A)">
+              <input
+                className="field"
+                inputMode="numeric"
+                min="0"
+                type="number"
+                value={values.redAway}
+                onChange={(e) => update("redAway", e.target.value)}
+              />
+            </Field>
+          </div>
+        ) : null}
       </div>
 
       <button
