@@ -29,6 +29,7 @@ from fvmatch.model.live import LiveState
 
 if TYPE_CHECKING:
     from fvmatch.data.live_feed import LiveMatch
+    from fvmatch.data.store import Store
 
 app = typer.Typer(
     name="fvmatch",
@@ -480,6 +481,27 @@ def analyze_live(
         render_analysis(analysis)
 
 
+def _make_persist_store(enabled: bool, diag: Console) -> Store | None:
+    """Build a Supabase Store for live persistence, or None (gated, best-effort)."""
+    if not enabled:
+        return None
+    if not settings.has_supabase:
+        diag.print(
+            "[yellow]--persist ignored: no Supabase configured "
+            "(set SUPABASE_URL + SUPABASE_SERVICE_KEY).[/yellow]"
+        )
+        return None
+    from fvmatch.data.store import Store
+
+    try:
+        store = Store(settings.supabase_url, settings.supabase_service_key)
+        _ = store.client  # fail fast if the supabase package is unavailable
+    except Exception as exc:  # noqa: BLE001 - best-effort, never abort the loop
+        diag.print(f"[yellow]--persist disabled: {exc}[/yellow]")
+        return None
+    return store
+
+
 @app.command()
 def live(
     home: str = typer.Option(..., help="Home (or first) team name"),
@@ -499,6 +521,13 @@ def live(
     ),
     elo_home: float | None = typer.Option(None, help="Override home Elo rating"),
     elo_away: float | None = typer.Option(None, help="Override away Elo rating"),
+    persist: bool = typer.Option(
+        False, "--persist", help="Persist each snapshot to Supabase (needs creds)"
+    ),
+    competition: str = typer.Option(
+        "FIFA World Cup 2026", "--competition", help="Competition name for persistence"
+    ),
+    season: str = typer.Option("2026", "--season", help="Season tag for persistence"),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
 ) -> None:
     """Poll ESPN + Polymarket and run in-play fair-value analysis on a loop.
@@ -510,6 +539,9 @@ def live(
     diag = err_console if json_out else console
     entry_prices: dict[str, float] = {}
     last_view: dict[str, OutcomeView] = {}
+    persist_store = _make_persist_store(persist, diag)
+    persist_warned = False
+    persisted = {"snapshots": 0, "model_probs": 0}
     try:
         while True:
             ts = datetime.now().strftime("%H:%M:%S")
@@ -545,6 +577,30 @@ def live(
                 ):
                     entry_prices[o.outcome] = o.market_price
 
+            if persist_store is not None:
+                try:
+                    from fvmatch.data.persistence import persist_live_cycle
+
+                    counts = persist_live_cycle(
+                        persist_store,
+                        analysis,
+                        slug=poly_slug,
+                        competition_name=competition,
+                        season=season,
+                        espn_event_id=snapshot.event_id,
+                        status_state=snapshot.status_state,
+                        is_close=snapshot.is_final,
+                    )
+                    persisted["snapshots"] += counts["snapshots"]
+                    persisted["model_probs"] += counts["model_probs"]
+                except Exception as exc:  # noqa: BLE001 - best-effort persistence
+                    if not persist_warned:
+                        diag.print(
+                            f"[yellow]persist failed (further errors muted): "
+                            f"{exc}[/yellow]"
+                        )
+                        persist_warned = True
+
             if json_out:
                 typer.echo(json.dumps(_analysis_json_payload(analysis, entry_prices)))
             else:
@@ -572,6 +628,12 @@ def live(
 
     if not json_out:
         _render_live_summary(entry_prices, last_view)
+        if persist_store is not None:
+            console.print(
+                f"[dim]Supabase: persisted {persisted['snapshots']} snapshots + "
+                f"{persisted['model_probs']} model-prob rows; "
+                f"{len(entry_prices)} proposed bet(s) logged.[/dim]"
+            )
 
 
 @app.command()
