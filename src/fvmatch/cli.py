@@ -53,9 +53,7 @@ def render_analysis(analysis: MatchAnalysis) -> None:
             f"score {ls.home_goals}-{ls.away_goals}"
         )
         if ls.red_cards_home or ls.red_cards_away:
-            header += (
-                f"  ·  reds {ls.red_cards_home}-{ls.red_cards_away}"
-            )
+            header += f"  ·  reds {ls.red_cards_home}-{ls.red_cards_away}"
     console.print(Panel(header, title="fv-match", expand=False))
 
     table = Table(title="Model vs Market", show_lines=False)
