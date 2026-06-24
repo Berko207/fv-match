@@ -6,12 +6,13 @@ import { AnalysisResults } from "@/components/AnalysisResults";
 import { EdgeArbTables } from "@/components/EdgeArbTables";
 import { MatchForm, type MatchFormValues } from "@/components/MatchForm";
 import { detectLocks, edgeSweep } from "@/core/arb";
+import { computeClv } from "@/core/clv";
 import {
   fixtureToFormValues,
   pickDefaultFixture,
   type FwcFixture,
 } from "@/core/fixtures";
-import type { MatchAnalysis } from "@/core/engine";
+import type { MatchAnalysis, OutcomeView } from "@/core/engine";
 import { analyzeMatch } from "@/core/engine";
 import type { LiveState } from "@/core/live";
 import type { SiblingMarkets } from "@/core/markets";
@@ -128,6 +129,9 @@ export default function HomePage() {
     fetchedAt: string;
   } | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
+  // CLV session: entry price (first poll a bet cleared the gate) + latest priced view.
+  const [entryPrices, setEntryPrices] = useState<Record<string, number>>({});
+  const [lastViews, setLastViews] = useState<Record<string, OutcomeView>>({});
 
   const runAnalysis = useCallback(
     (values: MatchFormValues, fixture: FwcFixture | null = null) => {
@@ -189,9 +193,28 @@ export default function HomePage() {
         setLiveMeta({ live, fetchedAt: payload.fetchedAt });
 
         try {
-          setAnalysis(analyzeMatch(toAnalysisInput(values)));
+          const result = analyzeMatch(toAnalysisInput(values));
+          setAnalysis(result);
           setSiblingMarkets(markets);
           setError(null);
+          // Keep the latest priced view per outcome (closing-line proxy) and
+          // capture entry price the first poll an outcome clears the bet gate.
+          setLastViews((prev) => {
+            const next = { ...prev };
+            for (const o of result.outcomes) {
+              if (o.marketPrice != null) next[o.outcome] = o;
+            }
+            return next;
+          });
+          setEntryPrices((prev) => {
+            const next = { ...prev };
+            for (const o of result.outcomes) {
+              if (o.bet && o.marketPrice != null && !(o.outcome in next)) {
+                next[o.outcome] = o.marketPrice;
+              }
+            }
+            return next;
+          });
         } catch (err) {
           setError(err instanceof Error ? err.message : "Analysis failed");
         }
@@ -286,6 +309,12 @@ export default function HomePage() {
     };
   }, [liveAuto, selectedSlug, fetchLiveAndAnalyze]);
 
+  // CLV is scoped to one match — reset the session whenever the fixture changes.
+  useEffect(() => {
+    setEntryPrices({});
+    setLastViews({});
+  }, [selectedSlug]);
+
   const edgeSweepResult =
     analysis && siblingMarkets && analysis.scorelineMatrix
       ? edgeSweep(
@@ -355,6 +384,17 @@ export default function HomePage() {
           {analysis ? (
             <>
               <AnalysisResults analysis={analysis} />
+              {Object.keys(entryPrices).length > 0 ? (
+                <LiveClvPanel
+                  entryPrices={entryPrices}
+                  lastViews={lastViews}
+                  labels={{
+                    home: analysis.home,
+                    draw: "Draw",
+                    away: analysis.away,
+                  }}
+                />
+              ) : null}
               <EdgeArbTables edgeSweep={edgeSweepResult} locks={locks} />
             </>
           ) : (
@@ -444,5 +484,75 @@ function LiveControls({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function LiveClvPanel({
+  entryPrices,
+  lastViews,
+  labels,
+}: {
+  entryPrices: Record<string, number>;
+  lastViews: Record<string, OutcomeView>;
+  labels: Record<string, string>;
+}) {
+  const rows = Object.entries(entryPrices).map(([outcome, entry]) => {
+    const view = lastViews[outcome];
+    const latest = view?.marketPrice ?? entry;
+    const clv = entry > 0 ? computeClv(entry, latest) : 0;
+    return { outcome, entry, latest, clv, stakeUsd: view?.stakeUsd ?? null };
+  });
+
+  return (
+    <section className="glass rounded-2xl p-5 sm:p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
+          Session CLV · beat-the-close
+        </h3>
+        <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-cyan-200">
+          North-star
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[520px] text-sm">
+          <thead>
+            <tr className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
+              <th className="pb-3 pr-3">Bet</th>
+              <th className="pb-3 pr-3 text-right">Entry</th>
+              <th className="pb-3 pr-3 text-right">Latest</th>
+              <th className="pb-3 pr-3 text-right">CLV</th>
+              <th className="pb-3 text-right">Stake</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.outcome}
+                className="border-b border-[var(--border)]/70 last:border-0"
+              >
+                <td className="py-3 pr-3 font-medium">{labels[r.outcome] ?? r.outcome}</td>
+                <td className="py-3 pr-3 text-right font-mono">{r.entry.toFixed(3)}</td>
+                <td className="py-3 pr-3 text-right font-mono">{r.latest.toFixed(3)}</td>
+                <td
+                  className={`py-3 pr-3 text-right font-mono ${
+                    r.clv >= 0 ? "text-emerald-300" : "text-red-300"
+                  }`}
+                >
+                  {r.clv >= 0 ? "+" : ""}
+                  {(r.clv * 100).toFixed(2)}%
+                </td>
+                <td className="py-3 text-right font-mono">
+                  {r.stakeUsd != null ? `$${r.stakeUsd.toFixed(2)}` : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-xs text-[var(--muted)]">
+        Entry = market price the first poll a bet cleared the gate. CLV &gt; 0 = the line
+        moved toward our side after entry (beating the close). Dry-run only — no orders.
+      </p>
+    </section>
   );
 }
