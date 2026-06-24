@@ -22,8 +22,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from fvmatch.accounting.clv import compute_clv
 from fvmatch.config import settings
-from fvmatch.engine import MatchAnalysis, analyze_live_match, analyze_match
+from fvmatch.engine import MatchAnalysis, OutcomeView, analyze_live_match, analyze_match
 from fvmatch.model.live import LiveState
 
 if TYPE_CHECKING:
@@ -35,6 +36,8 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+# Diagnostics go here in --json mode so stdout stays pure machine-readable JSON.
+err_console = Console(stderr=True)
 
 
 def _fmt_pct(x: float | None) -> str:
@@ -133,7 +136,9 @@ def _live_status_line(snapshot: LiveMatch) -> str:
     if snapshot.is_pre:
         return "pre-match"
     detail = snapshot.status_detail or f"{snapshot.minute:.0f}'"
-    return f"{snapshot.minute:.0f}' {snapshot.home_goals}-{snapshot.away_goals} ({detail})"
+    return (
+        f"{snapshot.minute:.0f}' {snapshot.home_goals}-{snapshot.away_goals} ({detail})"
+    )
 
 
 def _live_cycle(
@@ -176,7 +181,26 @@ def _live_cycle(
     return analysis, snapshot
 
 
-def _analysis_json_payload(analysis: MatchAnalysis) -> dict[str, object]:
+def _clv_value(
+    entry_prices: dict[str, float], view: OutcomeView | None
+) -> float | None:
+    """Closing-line value of an entered bet vs its current price, or ``None``.
+
+    Positive means the line moved toward our side after entry (we'd have bought
+    cheaper than the current/closing price) — the project's north-star metric.
+    """
+    if view is None or view.market_price is None:
+        return None
+    entry = entry_prices.get(view.outcome)
+    if entry is None or entry <= 0:
+        return None
+    return compute_clv(entry, view.market_price)
+
+
+def _analysis_json_payload(
+    analysis: MatchAnalysis, entry_prices: dict[str, float] | None = None
+) -> dict[str, object]:
+    entries = entry_prices or {}
     payload: dict[str, object] = {
         "home": analysis.home,
         "away": analysis.away,
@@ -203,6 +227,8 @@ def _analysis_json_payload(analysis: MatchAnalysis) -> dict[str, object]:
                 "ev_per_dollar": o.ev_per_dollar,
                 "stake_usd": o.stake_usd,
                 "bet": o.bet,
+                "entry_price": entries.get(o.outcome),
+                "clv": _clv_value(entries, o),
             }
             for o in analysis.outcomes
         ],
@@ -221,6 +247,63 @@ def _analysis_json_payload(analysis: MatchAnalysis) -> dict[str, object]:
             "red_cards_away": ls.red_cards_away,
         }
     return payload
+
+
+def _render_live_clv_line(
+    entry_prices: dict[str, float], last_view: dict[str, OutcomeView]
+) -> None:
+    """One compact line summarising CLV-since-entry for each proposed bet."""
+    if not entry_prices:
+        return
+    parts: list[str] = []
+    for outcome in entry_prices:
+        view = last_view.get(outcome)
+        clv = _clv_value(entry_prices, view)
+        latest = view.market_price if view and view.market_price is not None else None
+        if clv is None or latest is None:
+            continue
+        color = "green" if clv >= 0 else "red"
+        parts.append(
+            f"{outcome} {entry_prices[outcome]:.3f}→{latest:.3f} "
+            f"[{color}]{clv * 100:+.1f}%[/{color}]"
+        )
+    if parts:
+        console.print("CLV vs entry:  " + "   ".join(parts))
+
+
+def _render_live_summary(
+    entry_prices: dict[str, float], last_view: dict[str, OutcomeView]
+) -> None:
+    """Closing-out CLV table for the session's proposed (dry-run) bets."""
+    if not entry_prices:
+        console.print(
+            "[dim]No outcome cleared the edge gate this session — "
+            "no bets proposed, no CLV.[/dim]"
+        )
+        return
+    tbl = Table(title="Session proposed bets (DRY_RUN) · CLV vs latest line")
+    tbl.add_column("Outcome", style="bold")
+    tbl.add_column("Entry price", justify="right")
+    tbl.add_column("Latest price", justify="right")
+    tbl.add_column("CLV", justify="right")
+    tbl.add_column("Latest stake", justify="right")
+    for outcome, entry in entry_prices.items():
+        view = last_view.get(outcome)
+        latest = view.market_price if view and view.market_price is not None else entry
+        clv = _clv_value(entry_prices, view) or 0.0
+        color = "green" if clv >= 0 else "red"
+        tbl.add_row(
+            outcome,
+            f"{entry:.3f}",
+            f"{latest:.3f}",
+            f"[{color}]{clv * 100:+.2f}%[/{color}]",
+            f"${view.stake_usd:,.2f}" if view else "-",
+        )
+    console.print(tbl)
+    console.print(
+        "[dim]CLV>0 = line moved toward our side after entry (beat-the-close proxy, "
+        "the north-star metric). Strictly dry-run — no orders placed.[/dim]"
+    )
 
 
 @app.command()
@@ -418,7 +501,15 @@ def live(
     elo_away: float | None = typer.Option(None, help="Override away Elo rating"),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
 ) -> None:
-    """Poll ESPN + Polymarket and run in-play fair-value analysis on a loop."""
+    """Poll ESPN + Polymarket and run in-play fair-value analysis on a loop.
+
+    Strictly DRY_RUN: proposes fractional-Kelly stakes and tracks CLV (entry vs
+    latest line) but never places an order. With ``--json``, stdout is one
+    compact JSON object per cycle (JSONL) and all diagnostics go to stderr.
+    """
+    diag = err_console if json_out else console
+    entry_prices: dict[str, float] = {}
+    last_view: dict[str, OutcomeView] = {}
     try:
         while True:
             ts = datetime.now().strftime("%H:%M:%S")
@@ -432,43 +523,55 @@ def live(
                 elo_away=elo_away,
             )
             if result is None:
-                if once:
-                    console.print(
-                        f"[yellow]{ts} ESPN: fixture not on scoreboard[/yellow]"
+                if json_out:
+                    typer.echo(json.dumps({"ts": ts, "status": "no_live_state"}))
+                else:
+                    suffix = "" if once else f" — retrying in {interval}s…"
+                    diag.print(
+                        f"[yellow]{ts} ESPN: fixture not on scoreboard{suffix}[/yellow]"
                     )
-                    raise typer.Exit(code=1)
-                console.print(
-                    f"[yellow]{ts} ESPN: fixture not on scoreboard — "
-                    f"retrying in {interval}s…[/yellow]"
-                )
+                if once:
+                    break
                 time.sleep(interval)
                 continue
 
             analysis, snapshot = result
-            if not json_out and not once:
-                console.clear()
-            status = _live_status_line(snapshot)
-            console.print(
-                f"[dim]Updated {ts}  ·  ESPN {status}  ·  slug {poly_slug}[/dim]"
-            )
-            if analysis.overround is None:
-                console.print(
-                    "[yellow]Polymarket odds unavailable — model-only.[/yellow]"
-                )
+            for o in analysis.outcomes:
+                last_view[o.outcome] = o
+                if (
+                    o.bet
+                    and o.market_price is not None
+                    and o.outcome not in entry_prices
+                ):
+                    entry_prices[o.outcome] = o.market_price
+
             if json_out:
-                typer.echo(json.dumps(_analysis_json_payload(analysis), indent=2))
+                typer.echo(json.dumps(_analysis_json_payload(analysis, entry_prices)))
             else:
+                if not once:
+                    console.clear()
+                status = _live_status_line(snapshot)
+                console.print(
+                    f"[dim]Updated {ts}  ·  ESPN {status}  ·  slug {poly_slug}[/dim]"
+                )
+                if analysis.overround is None:
+                    console.print(
+                        "[yellow]Polymarket odds unavailable — model-only.[/yellow]"
+                    )
                 render_analysis(analysis)
+                _render_live_clv_line(entry_prices, last_view)
 
             if snapshot.is_final:
-                console.print("[dim]Match finished — stopping.[/dim]")
+                diag.print("[dim]Match finished — stopping.[/dim]")
                 break
             if once:
                 break
             time.sleep(interval)
     except KeyboardInterrupt:
-        console.print("\n[dim]Stopped.[/dim]")
-        raise typer.Exit(code=0) from None
+        diag.print("\n[dim]Stopped.[/dim]")
+
+    if not json_out:
+        _render_live_summary(entry_prices, last_view)
 
 
 @app.command()

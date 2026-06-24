@@ -22,7 +22,9 @@ import httpx
 
 from fvmatch.model.live import LiveState
 
-ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard"
+ESPN_SCOREBOARD = (
+    "https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard"
+)
 ESPN_SUMMARY = "https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/summary"
 DEFAULT_LEAGUE = "fifa.world"  # FIFA World Cup
 _TIMEOUT = 15.0
@@ -122,7 +124,12 @@ def _coerce_int(value: Any) -> int:
 
 def _team_name(competitor: dict[str, Any]) -> str:
     team = competitor.get("team") or {}
-    return str(team.get("displayName") or team.get("name") or team.get("shortDisplayName") or "")
+    return str(
+        team.get("displayName")
+        or team.get("name")
+        or team.get("shortDisplayName")
+        or ""
+    )
 
 
 def _minute_from_status(status: dict[str, Any], state: str) -> float:
@@ -138,7 +145,9 @@ def _minute_from_status(status: dict[str, Any], state: str) -> float:
         except (TypeError, ValueError):
             pass
     # Fallback: leading digits of a display string like "63'" or "45'+2'".
-    detail = str((status.get("type") or {}).get("detail") or status.get("displayClock") or "")
+    detail = str(
+        (status.get("type") or {}).get("detail") or status.get("displayClock") or ""
+    )
     m = re.match(r"\s*(\d+)", detail)
     if m:
         return min(max(float(m.group(1)), 0.0), _MATCH_LENGTH)
