@@ -1,7 +1,10 @@
 """Supabase client wrapper + typed upsert helpers.
 
-Phase 0: fully stubbed. Real implementation will use service-role key for
-insert/upsert on the tables defined in 0001_init.sql.
+Low-level primitives (``select_one``/``insert``/``update``/``get_or_create``) and
+the live time-series inserts (``insert_market_snapshots``/``insert_model_probs``/
+``insert_bets``) are implemented against supabase-py using a service-role key on
+the tables in 0001_init.sql. The bulk backfill upserts and post-match resolution
+helpers remain stubs.
 """
 
 from __future__ import annotations
@@ -55,9 +58,11 @@ class BetRow(TypedDict, total=False):
 
 
 class Store:
-    """Thin typed wrapper around Supabase client.
+    """Thin typed wrapper around the Supabase client.
 
-    All methods are STUBS in Phase 0 — they document the intended contract.
+    Primitives + live-persistence inserts are implemented; bulk backfill upserts
+    and resolution helpers (``upsert_*``, ``update_bet_resolution``, ``insert_clv``,
+    the ``get_*`` queries) are still stubs.
     """
 
     def __init__(self, url: str | None = None, key: str | None = None) -> None:
@@ -72,6 +77,54 @@ class Store:
                 raise RuntimeError("supabase package not installed (uv sync)")
             self._client = create_client(self.url or "", self.key or "")
         return self._client
+
+    # --- Low-level primitives (PostgREST via supabase-py) ---
+
+    def select_one(self, table: str, match: dict[str, Any]) -> dict[str, Any] | None:
+        """Return the first row of ``table`` matching every ``match`` filter."""
+        query = self.client.table(table).select("*")
+        for column, value in match.items():
+            query = query.eq(column, value)
+        rows = query.limit(1).execute().data or []
+        return rows[0] if rows else None
+
+    def insert(
+        self, table: str, rows: list[dict[str, Any]] | dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Insert one or more rows; return the inserted rows (with ids)."""
+        payload = rows if isinstance(rows, list) else [rows]
+        if not payload:
+            return []
+        return self.client.table(table).insert(payload).execute().data or []
+
+    def update(
+        self, table: str, row_id: UUID | int | str, values: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Update the row with primary key ``row_id``; return it (or None)."""
+        rows = (
+            self.client.table(table).update(values).eq("id", row_id).execute().data
+            or []
+        )
+        return rows[0] if rows else None
+
+    def get_or_create(
+        self,
+        table: str,
+        match: dict[str, Any],
+        defaults: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return the row matching ``match``, else insert ``{**match, **defaults}``.
+
+        Idempotency relies on a single writer (the live loop). For concurrent
+        writers add a unique constraint and switch to ``upsert(on_conflict=...)``.
+        """
+        existing = self.select_one(table, match)
+        if existing is not None:
+            return existing
+        created = self.insert(table, {**match, **(defaults or {})})
+        if not created:
+            raise RuntimeError(f"insert into {table!r} returned no row")
+        return created[0]
 
     # --- Stubs with full signatures + docstrings ---
 
@@ -99,15 +152,15 @@ class Store:
         self, rows: list[MarketSnapshotRow]
     ) -> list[dict[str, Any]]:
         """Time-series snapshots. is_close=True for closing line capture."""
-        raise NotImplementedError("Phase 0 stub")
+        return self.insert("market_snapshots", [dict(r) for r in rows])
 
     def insert_model_probs(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Store model H/D/A + full scoreline_matrix (jsonb)."""
-        raise NotImplementedError("Phase 0 stub")
+        """Store model H/D/A + optional full scoreline_matrix (jsonb)."""
+        return self.insert("model_probs", list(rows))
 
     def insert_bets(self, rows: list[BetRow]) -> list[dict[str, Any]]:
         """Log proposed or executed bets (dry_run flag critical)."""
-        raise NotImplementedError("Phase 0 stub")
+        return self.insert("bets", [dict(r) for r in rows])
 
     def update_bet_resolution(
         self, bet_id: UUID | int, realized_pnl: float, status: str = "resolved"

@@ -8,6 +8,16 @@ from fvmatch.data.polymarket.constants import (
     SignatureType,
 )
 from fvmatch.data.polymarket.gamma import GammaClient, GammaMarket
+from fvmatch.data.polymarket.odds import (
+    MatchOdds,
+    fetch_event_by_slug,
+    fetch_market_by_slug,
+    fetch_match_odds,
+    fetch_three_way_odds,
+    parse_match_odds,
+    parse_three_way_odds,
+    search_events,
+)
 
 __all__ = [
     "CLOB_HOST",
@@ -16,5 +26,13 @@ __all__ = [
     "GAMMA_HOST",
     "GammaClient",
     "GammaMarket",
+    "MatchOdds",
     "SignatureType",
+    "fetch_event_by_slug",
+    "fetch_market_by_slug",
+    "fetch_match_odds",
+    "fetch_three_way_odds",
+    "parse_match_odds",
+    "parse_three_way_odds",
+    "search_events",
 ]

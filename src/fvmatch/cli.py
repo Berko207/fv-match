@@ -2,24 +2,34 @@
 
 The headline command is ``analyze`` — an end-to-end fair-value report for a
 single fixture that runs fully offline (Elo prior → Dixon-Coles → de-vig → edge
-→ Kelly). ``fit`` calibrates a Dixon-Coles model on a results file, ``paper``
-runs a slate of fixtures, and ``report`` summarizes P&L + CLV from a bets file.
+→ Kelly). ``live`` polls ESPN for match state and Polymarket for odds, then
+runs the in-play model on a refresh loop. ``fit`` calibrates a Dixon-Coles model
+on a results file, ``paper`` runs a slate of fixtures, and ``report`` summarizes
+P&L + CLV from a bets file.
 All paths respect the ``DRY_RUN`` guardrail.
 """
 
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from fvmatch.accounting.clv import compute_clv
 from fvmatch.config import settings
-from fvmatch.engine import MatchAnalysis, analyze_live_match, analyze_match
+from fvmatch.engine import MatchAnalysis, OutcomeView, analyze_live_match, analyze_match
 from fvmatch.model.live import LiveState
+
+if TYPE_CHECKING:
+    from fvmatch.data.live_feed import LiveMatch
+    from fvmatch.data.store import Store
 
 app = typer.Typer(
     name="fvmatch",
@@ -27,6 +37,8 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+# Diagnostics go here in --json mode so stdout stays pure machine-readable JSON.
+err_console = Console(stderr=True)
 
 
 def _fmt_pct(x: float | None) -> str:
@@ -117,6 +129,182 @@ def render_analysis(analysis: MatchAnalysis) -> None:
         )
     else:
         console.print("[dim]No outcome clears the edge gate — no bet.[/dim]")
+
+
+def _live_status_line(snapshot: LiveMatch) -> str:
+    if snapshot.is_final:
+        return f"FT {snapshot.home_goals}-{snapshot.away_goals}"
+    if snapshot.is_pre:
+        return "pre-match"
+    detail = snapshot.status_detail or f"{snapshot.minute:.0f}'"
+    return (
+        f"{snapshot.minute:.0f}' {snapshot.home_goals}-{snapshot.away_goals} ({detail})"
+    )
+
+
+def _live_cycle(
+    *,
+    home: str,
+    away: str,
+    poly_slug: str,
+    league: str,
+    home_field: bool,
+    elo_home: float | None,
+    elo_away: float | None,
+) -> tuple[MatchAnalysis, LiveMatch] | None:
+    """One ESPN + Polymarket + in-play engine cycle."""
+    from fvmatch.data.live_feed import find_live_match
+    from fvmatch.data.polymarket import fetch_match_odds
+
+    snapshot = find_live_match(home, away, league=league)
+    if snapshot is None:
+        return None
+
+    state = snapshot.to_live_state()
+    home_odds = draw_odds = away_odds = None
+    match_odds = fetch_match_odds(poly_slug, home, away)
+    if match_odds:
+        home_odds = match_odds.home_odds
+        draw_odds = match_odds.draw_odds
+        away_odds = match_odds.away_odds
+
+    analysis = analyze_live_match(
+        home=home,
+        away=away,
+        state=state,
+        home_odds=home_odds,
+        draw_odds=draw_odds,
+        away_odds=away_odds,
+        neutral=not home_field,
+        elo_home=elo_home,
+        elo_away=elo_away,
+    )
+    return analysis, snapshot
+
+
+def _clv_value(
+    entry_prices: dict[str, float], view: OutcomeView | None
+) -> float | None:
+    """Closing-line value of an entered bet vs its current price, or ``None``.
+
+    Positive means the line moved toward our side after entry (we'd have bought
+    cheaper than the current/closing price) — the project's north-star metric.
+    """
+    if view is None or view.market_price is None:
+        return None
+    entry = entry_prices.get(view.outcome)
+    if entry is None or entry <= 0:
+        return None
+    return compute_clv(entry, view.market_price)
+
+
+def _analysis_json_payload(
+    analysis: MatchAnalysis, entry_prices: dict[str, float] | None = None
+) -> dict[str, object]:
+    entries = entry_prices or {}
+    payload: dict[str, object] = {
+        "home": analysis.home,
+        "away": analysis.away,
+        "neutral": analysis.neutral,
+        "elo": {"home": analysis.elo_home, "away": analysis.elo_away},
+        "expected_goals": {
+            "home": analysis.expected_home_goals,
+            "away": analysis.expected_away_goals,
+        },
+        "model_probs": {
+            "home": analysis.p_home,
+            "draw": analysis.p_draw,
+            "away": analysis.p_away,
+        },
+        "overround": analysis.overround,
+        "outcomes": [
+            {
+                "outcome": o.outcome,
+                "model_p": o.model_p,
+                "fair_odds": o.fair_odds,
+                "market_odds": o.market_odds,
+                "consensus_p": o.consensus_p,
+                "edge": o.edge,
+                "ev_per_dollar": o.ev_per_dollar,
+                "stake_usd": o.stake_usd,
+                "bet": o.bet,
+                "entry_price": entries.get(o.outcome),
+                "clv": _clv_value(entries, o),
+            }
+            for o in analysis.outcomes
+        ],
+        "top_scorelines": [
+            {"home": i, "away": j, "p": p} for i, j, p in analysis.top_scorelines
+        ],
+        "dry_run": analysis.dry_run,
+    }
+    if analysis.live_state is not None:
+        ls = analysis.live_state
+        payload["live"] = {
+            "minute": ls.minute,
+            "home_goals": ls.home_goals,
+            "away_goals": ls.away_goals,
+            "red_cards_home": ls.red_cards_home,
+            "red_cards_away": ls.red_cards_away,
+        }
+    return payload
+
+
+def _render_live_clv_line(
+    entry_prices: dict[str, float], last_view: dict[str, OutcomeView]
+) -> None:
+    """One compact line summarising CLV-since-entry for each proposed bet."""
+    if not entry_prices:
+        return
+    parts: list[str] = []
+    for outcome in entry_prices:
+        view = last_view.get(outcome)
+        clv = _clv_value(entry_prices, view)
+        latest = view.market_price if view and view.market_price is not None else None
+        if clv is None or latest is None:
+            continue
+        color = "green" if clv >= 0 else "red"
+        parts.append(
+            f"{outcome} {entry_prices[outcome]:.3f}→{latest:.3f} "
+            f"[{color}]{clv * 100:+.1f}%[/{color}]"
+        )
+    if parts:
+        console.print("CLV vs entry:  " + "   ".join(parts))
+
+
+def _render_live_summary(
+    entry_prices: dict[str, float], last_view: dict[str, OutcomeView]
+) -> None:
+    """Closing-out CLV table for the session's proposed (dry-run) bets."""
+    if not entry_prices:
+        console.print(
+            "[dim]No outcome cleared the edge gate this session — "
+            "no bets proposed, no CLV.[/dim]"
+        )
+        return
+    tbl = Table(title="Session proposed bets (DRY_RUN) · CLV vs latest line")
+    tbl.add_column("Outcome", style="bold")
+    tbl.add_column("Entry price", justify="right")
+    tbl.add_column("Latest price", justify="right")
+    tbl.add_column("CLV", justify="right")
+    tbl.add_column("Latest stake", justify="right")
+    for outcome, entry in entry_prices.items():
+        view = last_view.get(outcome)
+        latest = view.market_price if view and view.market_price is not None else entry
+        clv = _clv_value(entry_prices, view) or 0.0
+        color = "green" if clv >= 0 else "red"
+        tbl.add_row(
+            outcome,
+            f"{entry:.3f}",
+            f"{latest:.3f}",
+            f"[{color}]{clv * 100:+.2f}%[/{color}]",
+            f"${view.stake_usd:,.2f}" if view else "-",
+        )
+    console.print(tbl)
+    console.print(
+        "[dim]CLV>0 = line moved toward our side after entry (beat-the-close proxy, "
+        "the north-star metric). Strictly dry-run — no orders placed.[/dim]"
+    )
 
 
 @app.command()
@@ -291,6 +479,161 @@ def analyze_live(
         typer.echo(json.dumps(payload, indent=2))
     else:
         render_analysis(analysis)
+
+
+def _make_persist_store(enabled: bool, diag: Console) -> Store | None:
+    """Build a Supabase Store for live persistence, or None (gated, best-effort)."""
+    if not enabled:
+        return None
+    if not settings.has_supabase:
+        diag.print(
+            "[yellow]--persist ignored: no Supabase configured "
+            "(set SUPABASE_URL + SUPABASE_SERVICE_KEY).[/yellow]"
+        )
+        return None
+    from fvmatch.data.store import Store
+
+    try:
+        store = Store(settings.supabase_url, settings.supabase_service_key)
+        _ = store.client  # fail fast if the supabase package is unavailable
+    except Exception as exc:  # noqa: BLE001 - best-effort, never abort the loop
+        diag.print(f"[yellow]--persist disabled: {exc}[/yellow]")
+        return None
+    return store
+
+
+@app.command()
+def live(
+    home: str = typer.Option(..., help="Home (or first) team name"),
+    away: str = typer.Option(..., help="Away (or second) team name"),
+    poly_slug: str = typer.Option(
+        ..., help="Polymarket Gamma event slug for live H/D/A odds"
+    ),
+    interval: int = typer.Option(
+        30, "--interval", "-i", min=5, help="Seconds between ESPN/Polymarket polls"
+    ),
+    once: bool = typer.Option(False, "--once", help="Run one cycle and exit"),
+    league: str = typer.Option(
+        "fifa.world", "--league", help="ESPN scoreboard league slug"
+    ),
+    home_field: bool = typer.Option(
+        False, "--home-field", help="Apply home advantage (default: neutral venue)"
+    ),
+    elo_home: float | None = typer.Option(None, help="Override home Elo rating"),
+    elo_away: float | None = typer.Option(None, help="Override away Elo rating"),
+    persist: bool = typer.Option(
+        False, "--persist", help="Persist each snapshot to Supabase (needs creds)"
+    ),
+    competition: str = typer.Option(
+        "FIFA World Cup 2026", "--competition", help="Competition name for persistence"
+    ),
+    season: str = typer.Option("2026", "--season", help="Season tag for persistence"),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
+) -> None:
+    """Poll ESPN + Polymarket and run in-play fair-value analysis on a loop.
+
+    Strictly DRY_RUN: proposes fractional-Kelly stakes and tracks CLV (entry vs
+    latest line) but never places an order. With ``--json``, stdout is one
+    compact JSON object per cycle (JSONL) and all diagnostics go to stderr.
+    """
+    diag = err_console if json_out else console
+    entry_prices: dict[str, float] = {}
+    last_view: dict[str, OutcomeView] = {}
+    persist_store = _make_persist_store(persist, diag)
+    persist_warned = False
+    persisted = {"snapshots": 0, "model_probs": 0}
+    try:
+        while True:
+            ts = datetime.now().strftime("%H:%M:%S")
+            result = _live_cycle(
+                home=home,
+                away=away,
+                poly_slug=poly_slug,
+                league=league,
+                home_field=home_field,
+                elo_home=elo_home,
+                elo_away=elo_away,
+            )
+            if result is None:
+                if json_out:
+                    typer.echo(json.dumps({"ts": ts, "status": "no_live_state"}))
+                else:
+                    suffix = "" if once else f" — retrying in {interval}s…"
+                    diag.print(
+                        f"[yellow]{ts} ESPN: fixture not on scoreboard{suffix}[/yellow]"
+                    )
+                if once:
+                    break
+                time.sleep(interval)
+                continue
+
+            analysis, snapshot = result
+            for o in analysis.outcomes:
+                last_view[o.outcome] = o
+                if (
+                    o.bet
+                    and o.market_price is not None
+                    and o.outcome not in entry_prices
+                ):
+                    entry_prices[o.outcome] = o.market_price
+
+            if persist_store is not None:
+                try:
+                    from fvmatch.data.persistence import persist_live_cycle
+
+                    counts = persist_live_cycle(
+                        persist_store,
+                        analysis,
+                        slug=poly_slug,
+                        competition_name=competition,
+                        season=season,
+                        espn_event_id=snapshot.event_id,
+                        status_state=snapshot.status_state,
+                        is_close=snapshot.is_final,
+                    )
+                    persisted["snapshots"] += counts["snapshots"]
+                    persisted["model_probs"] += counts["model_probs"]
+                except Exception as exc:  # noqa: BLE001 - best-effort persistence
+                    if not persist_warned:
+                        diag.print(
+                            f"[yellow]persist failed (further errors muted): "
+                            f"{exc}[/yellow]"
+                        )
+                        persist_warned = True
+
+            if json_out:
+                typer.echo(json.dumps(_analysis_json_payload(analysis, entry_prices)))
+            else:
+                if not once:
+                    console.clear()
+                status = _live_status_line(snapshot)
+                console.print(
+                    f"[dim]Updated {ts}  ·  ESPN {status}  ·  slug {poly_slug}[/dim]"
+                )
+                if analysis.overround is None:
+                    console.print(
+                        "[yellow]Polymarket odds unavailable — model-only.[/yellow]"
+                    )
+                render_analysis(analysis)
+                _render_live_clv_line(entry_prices, last_view)
+
+            if snapshot.is_final:
+                diag.print("[dim]Match finished — stopping.[/dim]")
+                break
+            if once:
+                break
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        diag.print("\n[dim]Stopped.[/dim]")
+
+    if not json_out:
+        _render_live_summary(entry_prices, last_view)
+        if persist_store is not None:
+            console.print(
+                f"[dim]Supabase: persisted {persisted['snapshots']} snapshots + "
+                f"{persisted['model_probs']} model-prob rows; "
+                f"{len(entry_prices)} proposed bet(s) logged.[/dim]"
+            )
 
 
 @app.command()
