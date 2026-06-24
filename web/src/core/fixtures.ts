@@ -1,3 +1,5 @@
+import type { SiblingMarkets } from "./markets";
+
 export type FixtureStatus = "upcoming" | "live" | "finished";
 
 export interface FwcFixture {
@@ -12,6 +14,7 @@ export interface FwcFixture {
   drawOdds: number | null;
   awayOdds: number | null;
   closed: boolean;
+  siblings?: SiblingMarkets;
 }
 
 function kickoffMs(fixture: FwcFixture): number {
@@ -36,6 +39,7 @@ export function pickDefaultFixture(fixtures: FwcFixture[]): FwcFixture | null {
 }
 
 export function fixtureToFormValues(fixture: FwcFixture) {
+  const inPlay = fixture.status === "live";
   return {
     home: fixture.home,
     away: fixture.away,
@@ -43,6 +47,12 @@ export function fixtureToFormValues(fixture: FwcFixture) {
     drawOdds: fixture.drawOdds != null ? String(fixture.drawOdds) : "",
     awayOdds: fixture.awayOdds != null ? String(fixture.awayOdds) : "",
     neutral: true,
+    inPlay,
+    minute: inPlay ? "45" : "0",
+    homeGoals: "0",
+    awayGoals: "0",
+    redHome: "0",
+    redAway: "0",
   };
 }
 
