@@ -2,15 +2,20 @@
 
 The headline command is ``analyze`` — an end-to-end fair-value report for a
 single fixture that runs fully offline (Elo prior → Dixon-Coles → de-vig → edge
-→ Kelly). ``fit`` calibrates a Dixon-Coles model on a results file, ``paper``
-runs a slate of fixtures, and ``report`` summarizes P&L + CLV from a bets file.
+→ Kelly). ``live`` polls ESPN for match state and Polymarket for odds, then
+runs the in-play model on a refresh loop. ``fit`` calibrates a Dixon-Coles model
+on a results file, ``paper`` runs a slate of fixtures, and ``report`` summarizes
+P&L + CLV from a bets file.
 All paths respect the ``DRY_RUN`` guardrail.
 """
 
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
@@ -20,6 +25,9 @@ from rich.table import Table
 from fvmatch.config import settings
 from fvmatch.engine import MatchAnalysis, analyze_live_match, analyze_match
 from fvmatch.model.live import LiveState
+
+if TYPE_CHECKING:
+    from fvmatch.data.live_feed import LiveMatch
 
 app = typer.Typer(
     name="fvmatch",
@@ -117,6 +125,102 @@ def render_analysis(analysis: MatchAnalysis) -> None:
         )
     else:
         console.print("[dim]No outcome clears the edge gate — no bet.[/dim]")
+
+
+def _live_status_line(snapshot: LiveMatch) -> str:
+    if snapshot.is_final:
+        return f"FT {snapshot.home_goals}-{snapshot.away_goals}"
+    if snapshot.is_pre:
+        return "pre-match"
+    detail = snapshot.status_detail or f"{snapshot.minute:.0f}'"
+    return f"{snapshot.minute:.0f}' {snapshot.home_goals}-{snapshot.away_goals} ({detail})"
+
+
+def _live_cycle(
+    *,
+    home: str,
+    away: str,
+    poly_slug: str,
+    league: str,
+    home_field: bool,
+    elo_home: float | None,
+    elo_away: float | None,
+) -> tuple[MatchAnalysis, LiveMatch] | None:
+    """One ESPN + Polymarket + in-play engine cycle."""
+    from fvmatch.data.live_feed import find_live_match
+    from fvmatch.data.polymarket import fetch_match_odds
+
+    snapshot = find_live_match(home, away, league=league)
+    if snapshot is None:
+        return None
+
+    state = snapshot.to_live_state()
+    home_odds = draw_odds = away_odds = None
+    match_odds = fetch_match_odds(poly_slug, home, away)
+    if match_odds:
+        home_odds = match_odds.home_odds
+        draw_odds = match_odds.draw_odds
+        away_odds = match_odds.away_odds
+
+    analysis = analyze_live_match(
+        home=home,
+        away=away,
+        state=state,
+        home_odds=home_odds,
+        draw_odds=draw_odds,
+        away_odds=away_odds,
+        neutral=not home_field,
+        elo_home=elo_home,
+        elo_away=elo_away,
+    )
+    return analysis, snapshot
+
+
+def _analysis_json_payload(analysis: MatchAnalysis) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "home": analysis.home,
+        "away": analysis.away,
+        "neutral": analysis.neutral,
+        "elo": {"home": analysis.elo_home, "away": analysis.elo_away},
+        "expected_goals": {
+            "home": analysis.expected_home_goals,
+            "away": analysis.expected_away_goals,
+        },
+        "model_probs": {
+            "home": analysis.p_home,
+            "draw": analysis.p_draw,
+            "away": analysis.p_away,
+        },
+        "overround": analysis.overround,
+        "outcomes": [
+            {
+                "outcome": o.outcome,
+                "model_p": o.model_p,
+                "fair_odds": o.fair_odds,
+                "market_odds": o.market_odds,
+                "consensus_p": o.consensus_p,
+                "edge": o.edge,
+                "ev_per_dollar": o.ev_per_dollar,
+                "stake_usd": o.stake_usd,
+                "bet": o.bet,
+            }
+            for o in analysis.outcomes
+        ],
+        "top_scorelines": [
+            {"home": i, "away": j, "p": p} for i, j, p in analysis.top_scorelines
+        ],
+        "dry_run": analysis.dry_run,
+    }
+    if analysis.live_state is not None:
+        ls = analysis.live_state
+        payload["live"] = {
+            "minute": ls.minute,
+            "home_goals": ls.home_goals,
+            "away_goals": ls.away_goals,
+            "red_cards_home": ls.red_cards_home,
+            "red_cards_away": ls.red_cards_away,
+        }
+    return payload
 
 
 @app.command()
@@ -291,6 +395,80 @@ def analyze_live(
         typer.echo(json.dumps(payload, indent=2))
     else:
         render_analysis(analysis)
+
+
+@app.command()
+def live(
+    home: str = typer.Option(..., help="Home (or first) team name"),
+    away: str = typer.Option(..., help="Away (or second) team name"),
+    poly_slug: str = typer.Option(
+        ..., help="Polymarket Gamma event slug for live H/D/A odds"
+    ),
+    interval: int = typer.Option(
+        30, "--interval", "-i", min=5, help="Seconds between ESPN/Polymarket polls"
+    ),
+    once: bool = typer.Option(False, "--once", help="Run one cycle and exit"),
+    league: str = typer.Option(
+        "fifa.world", "--league", help="ESPN scoreboard league slug"
+    ),
+    home_field: bool = typer.Option(
+        False, "--home-field", help="Apply home advantage (default: neutral venue)"
+    ),
+    elo_home: float | None = typer.Option(None, help="Override home Elo rating"),
+    elo_away: float | None = typer.Option(None, help="Override away Elo rating"),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
+) -> None:
+    """Poll ESPN + Polymarket and run in-play fair-value analysis on a loop."""
+    try:
+        while True:
+            ts = datetime.now().strftime("%H:%M:%S")
+            result = _live_cycle(
+                home=home,
+                away=away,
+                poly_slug=poly_slug,
+                league=league,
+                home_field=home_field,
+                elo_home=elo_home,
+                elo_away=elo_away,
+            )
+            if result is None:
+                if once:
+                    console.print(
+                        f"[yellow]{ts} ESPN: fixture not on scoreboard[/yellow]"
+                    )
+                    raise typer.Exit(code=1)
+                console.print(
+                    f"[yellow]{ts} ESPN: fixture not on scoreboard — "
+                    f"retrying in {interval}s…[/yellow]"
+                )
+                time.sleep(interval)
+                continue
+
+            analysis, snapshot = result
+            if not json_out and not once:
+                console.clear()
+            status = _live_status_line(snapshot)
+            console.print(
+                f"[dim]Updated {ts}  ·  ESPN {status}  ·  slug {poly_slug}[/dim]"
+            )
+            if analysis.overround is None:
+                console.print(
+                    "[yellow]Polymarket odds unavailable — model-only.[/yellow]"
+                )
+            if json_out:
+                typer.echo(json.dumps(_analysis_json_payload(analysis), indent=2))
+            else:
+                render_analysis(analysis)
+
+            if snapshot.is_final:
+                console.print("[dim]Match finished — stopping.[/dim]")
+                break
+            if once:
+                break
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/dim]")
+        raise typer.Exit(code=0) from None
 
 
 @app.command()
