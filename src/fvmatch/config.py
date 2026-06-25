@@ -82,6 +82,30 @@ class Settings(BaseSettings):
         default="rising",
         description="In-play goal-rate profile: uniform | rising",
     )
+    first_half_goal_share: float = Field(
+        default=0.45,
+        description="Fraction of match goals/counts expected in the first half",
+    )
+
+    # --- Peripheral count markets (prior-based: corners/shots/assists) ---
+    # These are UNCALIBRATED Elo-supremacy priors, not fitted from count data.
+    # They make corners/shots/assists priceable, but must be calibrated against
+    # real data and clear the CLV gate before any live money. See model/counts.py.
+    base_corners: float = Field(
+        default=10.5, description="Baseline expected total corners for an even match"
+    )
+    corner_elo_scale: float = Field(
+        default=500.0, description="Elo points per 1 corner of supremacy (weak link)"
+    )
+    base_shots: float = Field(
+        default=26.0, description="Baseline expected total shots for an even match"
+    )
+    shots_elo_scale: float = Field(
+        default=350.0, description="Elo points per 1 shot of supremacy"
+    )
+    assist_rate: float = Field(
+        default=0.77, description="Fraction of goals that are assisted (assist markets)"
+    )
 
     # --- Risk / accounting ---
     bankroll: float = Field(

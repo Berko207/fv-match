@@ -636,6 +636,168 @@ def live(
             )
 
 
+def _load_surface_from_file(path: Path, diag: Console):
+    """Build a MarketSurface from a captured JSON file.
+
+    Accepts either a bare list of Gamma event dicts, or
+    ``{home, away, slug?, game_id?, events: [...]}``. Identity falls back to the
+    first event's title when not given explicitly.
+    """
+    from fvmatch.data.polymarket.game import build_surface
+    from fvmatch.data.polymarket.odds import _split_title
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict) and "events" in data:
+        events = data["events"]
+        home, away = data.get("home"), data.get("away")
+        slug = data.get("slug", path.stem)
+        game_id = data.get("game_id")
+    else:
+        events = data if isinstance(data, list) else [data]
+        home = away = None
+        slug = path.stem
+        game_id = events[0].get("gameId") if events else None
+    if not home or not away:
+        names = _split_title(str(events[0].get("title") or "")) if events else None
+        if names is None:
+            diag.print("[red]Could not derive team names from the surface file.[/red]")
+            raise typer.Exit(code=1)
+        home, away = names
+    return build_surface(events, home, away, game_id, slug)
+
+
+def _render_game(analysis) -> None:
+    """Pretty-print a whole-game analysis: proposed bets + full market grid."""
+    venue = "neutral" if analysis.neutral else "home advantage"
+    header = (
+        f"[bold]{analysis.home}[/bold]  vs  [bold]{analysis.away}[/bold]   "
+        f"({analysis.slug})\n"
+        f"Elo {analysis.elo_home:.0f} – {analysis.elo_away:.0f}  ·  venue: {venue}  ·  "
+        f"Model xG {analysis.expected_home_goals:.2f} – "
+        f"{analysis.expected_away_goals:.2f}\n"
+        f"{analysis.n_markets} markets  ·  {analysis.n_priceable} priceable  ·  "
+        f"{len(analysis.proposed_bets)} proposed bets"
+    )
+    console.print(Panel(header, title="fv-match · whole game", expand=False))
+
+    if analysis.proposed_bets:
+        tbl = Table(title="Proposed bets (ranked by EV) · DRY_RUN", show_lines=False)
+        tbl.add_column("Market")
+        tbl.add_column("Outcome")
+        tbl.add_column("Model P", justify="right")
+        tbl.add_column("Mkt px", justify="right")
+        tbl.add_column("Edge", justify="right")
+        tbl.add_column("EV/$", justify="right")
+        tbl.add_column("Stake", justify="right")
+        tbl.add_column("Basis")
+        for b in analysis.proposed_bets:
+            basis = "[yellow]prior[/yellow]" if b.prior_based else "goals"
+            tbl.add_row(
+                b.market_type,
+                b.outcome,
+                f"{b.model_p * 100:.1f}%",
+                f"{b.market_price:.3f}",
+                f"[green]{b.edge * 100:+.1f}%[/green]",
+                f"{b.ev_per_dollar * 100:+.1f}%",
+                f"[green]${b.stake_usd:,.2f}[/green]",
+                basis,
+            )
+        console.print(tbl)
+        mode = "DRY_RUN (no orders placed)" if analysis.dry_run else "LIVE"
+        console.print(
+            f"Total proposed stake: [bold]${analysis.total_stake_usd:,.2f}[/bold] "
+            f"(bankroll ${settings.bankroll:,.0f}, capped at "
+            f"{settings.kelly_cap * 100:.0f}% per game)  ·  Mode: [bold]{mode}[/bold]"
+        )
+        if any(b.prior_based for b in analysis.proposed_bets):
+            console.print(
+                "[yellow]‘prior’ markets (corners/shots/assists) use uncalibrated "
+                "Elo priors — treat their edges as hypotheses, not signals.[/yellow]"
+            )
+    else:
+        console.print("[dim]No outcome clears the edge gate — no bets.[/dim]")
+
+    grid = Table(title="Full market surface", show_lines=False)
+    grid.add_column("Market")
+    grid.add_column("Line")
+    grid.add_column("Priceable", justify="center")
+    grid.add_column("Best edge", justify="right")
+    for m in analysis.markets:
+        edges = [o.edge for o in m.outcomes if o.edge is not None]
+        best = f"{max(edges) * 100:+.1f}%" if edges else "-"
+        line_lbl = "" if m.line is None else f"{m.line}"
+        if m.period != "full":
+            line_lbl = f"{m.period} {line_lbl}".strip()
+        mark = "[green]✓[/green]" if m.priceable else "[dim]—[/dim]"
+        grid.add_row(m.market_type, line_lbl, mark, best)
+    console.print(grid)
+
+
+@app.command("analyze-game")
+def analyze_game_cmd(
+    slug: str | None = typer.Option(
+        None, help="Polymarket game slug, e.g. fifwc-cze-mex-2026-06-24 (fetches live)"
+    ),
+    surface_file: Path | None = typer.Option(
+        None,
+        "--surface-file",
+        exists=True,
+        help="Captured JSON (event list or {home,away,events}) — runs fully offline",
+    ),
+    home_field: bool = typer.Option(
+        False, "--home-field", help="Apply home advantage (default: neutral venue)"
+    ),
+    elo_home: float | None = typer.Option(None, help="Override home Elo rating"),
+    elo_away: float | None = typer.Option(None, help="Override away Elo rating"),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of tables"),
+) -> None:
+    """Price the *entire* market surface of a game and rank +EV bets across it.
+
+    Reads every market Polymarket lists for the game (1X2, totals, BTTS, exact
+    score, team totals, halves, corners, shots, assists), prices what the model
+    can, and emits a structured proposal an agent can consume. Strictly DRY_RUN.
+    """
+    from fvmatch.engine_game import analyze_game
+
+    diag = err_console if json_out else console
+    if not slug and not surface_file:
+        diag.print("[red]Provide --slug (live) or --surface-file (offline).[/red]")
+        raise typer.Exit(code=1)
+
+    if surface_file is not None:
+        surface = _load_surface_from_file(surface_file, diag)
+    else:
+        from fvmatch.data.polymarket.game import fetch_surface
+
+        surface = fetch_surface(slug)  # type: ignore[arg-type]
+        if surface is None:
+            diag.print(
+                f"[red]Could not fetch surface for slug {slug!r} "
+                "(API unreachable or event not found).[/red]"
+            )
+            raise typer.Exit(code=1)
+
+    if not surface.lines:
+        diag.print("[yellow]Surface has no markets.[/yellow]")
+        raise typer.Exit(code=1)
+
+    analysis = analyze_game(
+        surface,
+        neutral=not home_field,
+        elo_home=elo_home,
+        elo_away=elo_away,
+    )
+
+    if json_out:
+        typer.echo(json.dumps(analysis.to_dict(), indent=2))
+    else:
+        diag.print(
+            f"[dim]Surface: {analysis.n_markets} markets "
+            f"({analysis.n_priceable} priceable) for {surface.slug}[/dim]"
+        )
+        _render_game(analysis)
+
+
 @app.command()
 def backfill(
     competition: str = typer.Option(..., help="Competition slug or external id"),
