@@ -369,21 +369,47 @@ export function byrealCategory(slug: string, title = ""): ByrealCategory {
   return "other";
 }
 
-async function fetchGammaEventsByTag(
-  tag: string,
-  limit = 200,
-): Promise<GammaEvent[]> {
+const GAMMA_PAGE_SIZE = 100;
+
+async function fetchGammaEventsPage(params: Record<string, string>): Promise<GammaEvent[]> {
   const url = new URL("/events", GAMMA_BASE);
-  url.searchParams.set("tag_slug", tag);
-  url.searchParams.set("closed", "false");
-  url.searchParams.set("limit", String(limit));
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
 
   const response = await fetch(url.toString(), { cache: "no-store" });
   if (!response.ok) {
-    throw new Error(`Gamma tag=${tag} failed: ${response.status}`);
+    throw new Error(`Gamma ${params.tag_slug ?? params.series_slug ?? "events"} failed: ${response.status}`);
   }
   const payload = (await response.json()) as unknown;
   return Array.isArray(payload) ? (payload as GammaEvent[]) : [];
+}
+
+/** Gamma caps responses at 100 rows — paginate until exhausted. */
+async function fetchGammaEventsPaginated(
+  params: Record<string, string>,
+): Promise<GammaEvent[]> {
+  const rows: GammaEvent[] = [];
+  for (let offset = 0; offset < 2000; offset += GAMMA_PAGE_SIZE) {
+    const page = await fetchGammaEventsPage({
+      ...params,
+      closed: "false",
+      limit: String(GAMMA_PAGE_SIZE),
+      offset: String(offset),
+    });
+    rows.push(...page);
+    if (page.length < GAMMA_PAGE_SIZE) break;
+  }
+  return rows;
+}
+
+async function fetchGammaEventsByTag(tag: string): Promise<GammaEvent[]> {
+  return fetchGammaEventsPaginated({ tag_slug: tag });
+}
+
+/** Full World Cup fixture surface — sibling prop events share this series. */
+async function fetchFifwcSeriesEvents(): Promise<GammaEvent[]> {
+  return fetchGammaEventsPaginated({ series_slug: "soccer-fifwc" });
 }
 
 function dedupeEvents(events: CatalogEvent[]): CatalogEvent[] {
@@ -430,6 +456,7 @@ const MATCH_SUBEVENT_ORDER = [
   "Halftime Result",
   "Second Half Result",
   "First To Score",
+  "First Team To Score",
 ];
 
 function subEventSortKey(label: string): number {
@@ -529,16 +556,23 @@ function wrapVenueCatalog(
 export async function fetchMarketsCatalog(): Promise<MarketsCatalogResponse> {
   const fetchedAt = new Date().toISOString();
 
-  const tagResults = await Promise.all(
-    POLYMARKET_SPORTS_TAGS.map(async (tag) => {
-      const rows = await fetchGammaEventsByTag(tag);
-      return rows
-        .map((row) => parseGammaEvent(row, tag))
-        .filter((event): event is CatalogEvent => event != null);
-    }),
-  );
+  const [tagResults, fifwcSeriesRows] = await Promise.all([
+    Promise.all(
+      POLYMARKET_SPORTS_TAGS.map(async (tag) => {
+        const rows = await fetchGammaEventsByTag(tag);
+        return rows
+          .map((row) => parseGammaEvent(row, tag))
+          .filter((event): event is CatalogEvent => event != null);
+      }),
+    ),
+    fetchFifwcSeriesEvents().then((rows) =>
+      rows
+        .map((row) => parseGammaEvent(row, "fifa-world-cup"))
+        .filter((event): event is CatalogEvent => event != null),
+    ),
+  ]);
 
-  const polymarketEvents = dedupeEvents(tagResults.flat());
+  const polymarketEvents = dedupeEvents([...tagResults.flat(), ...fifwcSeriesRows]);
   const byrealEvents = polymarketEvents
     .filter((e) => isByrealCurated(e.slug, e.title))
     .map((e) => ({

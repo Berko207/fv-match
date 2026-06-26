@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatKickoff } from "@/core/fixtures";
+import { LivePitchWidget } from "@/components/LivePitchWidget";
 import type {
   CatalogEvent,
   CatalogMatch,
@@ -79,6 +80,7 @@ export function MarketsBrowser() {
   const [category, setCategory] = useState<string>("fifa-world-cup");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [liveLog, setLiveLog] = useState<string[]>([]);
+  const [liveBySlug, setLiveBySlug] = useState<Record<string, PolySportUpdate>>({});
   const [streamStatus, setStreamStatus] = useState<"off" | "connecting" | "live" | "error">(
     "off",
   );
@@ -116,6 +118,7 @@ export function MarketsBrowser() {
     source.addEventListener("sport", (event) => {
       try {
         const update = JSON.parse((event as MessageEvent).data) as PolySportUpdate;
+        setLiveBySlug((prev) => ({ ...prev, [update.slug]: update }));
         pushLog(formatSportUpdateLine(update));
       } catch {
         /* ignore malformed */
@@ -256,6 +259,7 @@ export function MarketsBrowser() {
                 layout={layout}
                 query={query}
                 venue={catalog.polymarket}
+                liveBySlug={liveBySlug}
                 onCategoryChange={setCategory}
                 onToggle={(key) =>
                   setExpanded((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -271,6 +275,7 @@ export function MarketsBrowser() {
                 layout={layout}
                 query={query}
                 venue={catalog.byreal}
+                liveBySlug={liveBySlug}
                 onCategoryChange={setCategory}
                 onToggle={(key) =>
                   setExpanded((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -359,6 +364,7 @@ function VenueColumn({
   expanded,
   layout,
   browseMode,
+  liveBySlug,
   onCategoryChange,
   onToggle,
 }: {
@@ -369,6 +375,7 @@ function VenueColumn({
   expanded: Record<string, boolean>;
   layout: LayoutMode;
   browseMode: BrowseMode;
+  liveBySlug: Record<string, PolySportUpdate>;
   onCategoryChange: (value: string) => void;
   onToggle: (key: string) => void;
 }) {
@@ -486,6 +493,7 @@ function VenueColumn({
                   accentLink={accent.link}
                   accentPill={accent.pill}
                   expanded={Boolean(expanded[match.baseSlug])}
+                  liveUpdate={liveBySlug[match.baseSlug] ?? null}
                   match={match}
                   venue={venue.venue}
                   onToggle={() => onToggle(match.baseSlug)}
@@ -553,6 +561,7 @@ function MatchCard({
   expanded,
   accentPill,
   accentLink,
+  liveUpdate,
   onToggle,
 }: {
   match: CatalogMatch;
@@ -560,9 +569,14 @@ function MatchCard({
   expanded: boolean;
   accentPill: string;
   accentLink: string;
+  liveUpdate: PolySportUpdate | null;
   onToggle: () => void;
 }) {
   const analyzeHref = `/?fixture=${encodeURIComponent(match.baseSlug)}`;
+  const liveFeed = liveUpdate ?? match.liveState;
+  const showPitch =
+    expanded &&
+    (match.status === "live" || liveUpdate?.live || match.liveState?.live);
 
   return (
     <li className="rounded-xl border border-[var(--border)]/80 bg-black/15">
@@ -593,11 +607,11 @@ function MatchCard({
             </span>
           </div>
           <h3 className="text-sm font-semibold leading-snug sm:text-base">{match.title}</h3>
-          {match.liveState ? (
+          {liveFeed ? (
             <div className="mt-1 font-mono text-sm text-red-200">
-              {match.liveState.score}{" "}
+              {liveFeed.score}{" "}
               <span className="text-xs text-[var(--muted)]">
-                {[match.liveState.period, match.liveState.elapsed ? `${match.liveState.elapsed}'` : ""]
+                {[liveFeed.period, liveFeed.elapsed ? `${liveFeed.elapsed}'` : ""]
                   .filter(Boolean)
                   .join(" · ")}
               </span>
@@ -613,8 +627,20 @@ function MatchCard({
 
       {expanded ? (
         <div className="border-t border-[var(--border)]/70 px-3 pb-3 sm:px-4">
-          {match.liveState ? <LiveScoreBanner live={match.liveState} /> : null}
-          <div className="mb-4 flex flex-wrap gap-2 pt-1">
+          {showPitch ? (
+            <div className="pt-3">
+              <LivePitchWidget
+                awayAbbrev={match.liveState?.awayAbbrev}
+                awayTeam={match.away || match.liveState?.awayTeam || "Away"}
+                homeAbbrev={match.liveState?.homeAbbrev}
+                homeTeam={match.home || match.liveState?.homeTeam || "Home"}
+                live={liveFeed}
+              />
+            </div>
+          ) : match.liveState ? (
+            <LiveScoreBanner live={match.liveState} />
+          ) : null}
+          <div className="mb-4 flex flex-wrap gap-2 pt-3">
             <a
               className={`text-xs font-medium underline-offset-2 hover:underline ${accentLink}`}
               href={match.polymarketUrl}
@@ -638,6 +664,12 @@ function MatchCard({
               href={analyzeHref}
             >
               Analyze in fv-match →
+            </Link>
+            <Link
+              className="text-xs font-semibold text-emerald-300 underline-offset-2 hover:text-emerald-200 hover:underline"
+              href={`/markets/match/${encodeURIComponent(match.baseSlug)}`}
+            >
+              Full match view (all tabs) →
             </Link>
           </div>
 
