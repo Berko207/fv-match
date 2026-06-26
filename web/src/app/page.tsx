@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { AnalysisResults } from "@/components/AnalysisResults";
 import { EdgeArbTables } from "@/components/EdgeArbTables";
@@ -113,7 +115,10 @@ interface LiveApiResponse {
 
 const LIVE_REFRESH_MS = 20_000;
 
-export default function HomePage() {
+function HomePageContent() {
+  const searchParams = useSearchParams();
+  const fixtureFromUrl = searchParams.get("fixture");
+
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -260,7 +265,11 @@ export default function HomePage() {
         const loaded = payload.fixtures ?? [];
         setFixtures(loaded);
 
+        const urlFixture = fixtureFromUrl
+          ? loaded.find((f) => f.slug === fixtureFromUrl)
+          : null;
         const defaultFixture =
+          urlFixture ??
           loaded.find((f) => f.slug === payload.defaultSlug) ??
           pickDefaultFixture(loaded);
 
@@ -284,7 +293,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [applyFixture, runAnalysis]);
+  }, [applyFixture, fixtureFromUrl, runAnalysis]);
 
   // Live auto-refresh: poll ESPN state + Polymarket odds while enabled.
   useEffect(() => {
@@ -335,6 +344,14 @@ export default function HomePage() {
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
       <header className="mb-8 text-center sm:mb-10">
+        <div className="mb-4 flex justify-center">
+          <Link
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--muted)] transition hover:border-emerald-500/30 hover:text-emerald-200"
+            href="/markets"
+          >
+            Browse Polymarket + Bybit (Byreal) markets →
+          </Link>
+        </div>
         <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
           Phase 0 · Dixon-Coles + Elo · In-play
@@ -409,6 +426,20 @@ export default function HomePage() {
         Model-only demo. DRY_RUN enforced — no orders placed. Beat the close.
       </footer>
     </main>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto flex min-h-screen max-w-6xl items-center justify-center px-4 text-sm text-[var(--muted)]">
+          Loading analyzer…
+        </main>
+      }
+    >
+      <HomePageContent />
+    </Suspense>
   );
 }
 
