@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 
 import { AnalysisResults } from "@/components/AnalysisResults";
 import { EdgeArbTables } from "@/components/EdgeArbTables";
-import { MatchForm, type MatchFormValues } from "@/components/MatchForm";
+import { MatchForm, type AnalysisSource, type MatchFormValues } from "@/components/MatchForm";
 import { detectLocks, edgeSweep } from "@/core/arb";
 import { computeClv } from "@/core/clv";
 import {
@@ -115,6 +115,10 @@ interface LiveApiResponse {
 
 const LIVE_REFRESH_MS = 20_000;
 
+function formSnapshot(values: MatchFormValues): string {
+  return JSON.stringify(values);
+}
+
 function HomePageContent() {
   const searchParams = useSearchParams();
   const fixtureFromUrl = searchParams.get("fixture");
@@ -137,9 +141,18 @@ function HomePageContent() {
   // CLV session: entry price (first poll a bet cleared the gate) + latest priced view.
   const [entryPrices, setEntryPrices] = useState<Record<string, number>>({});
   const [lastViews, setLastViews] = useState<Record<string, OutcomeView>>({});
+  const [analyzedSnapshot, setAnalyzedSnapshot] = useState<string | null>(null);
+  const [analysisMeta, setAnalysisMeta] = useState<{
+    source: AnalysisSource;
+    at: string;
+  } | null>(null);
 
   const runAnalysis = useCallback(
-    (values: MatchFormValues, fixture: FwcFixture | null = null) => {
+    (
+      values: MatchFormValues,
+      fixture: FwcFixture | null = null,
+      source: AnalysisSource = "manual",
+    ) => {
       setLoading(true);
       setError(null);
       try {
@@ -148,6 +161,8 @@ function HomePageContent() {
 
         const markets = buildSiblingMarkets(values, fixture);
         setSiblingMarkets(markets);
+        setAnalyzedSnapshot(formSnapshot(values));
+        setAnalysisMeta({ source, at: new Date().toISOString() });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Analysis failed");
       } finally {
@@ -202,6 +217,8 @@ function HomePageContent() {
           setAnalysis(result);
           setSiblingMarkets(markets);
           setError(null);
+          setAnalyzedSnapshot(formSnapshot(values));
+          setAnalysisMeta({ source: "live", at: payload.fetchedAt });
           // Keep the latest priced view per outcome (closing-line proxy) and
           // capture entry price the first poll an outcome clears the bet gate.
           setLastViews((prev) => {
@@ -237,7 +254,7 @@ function HomePageContent() {
       const values = fixtureToFormValues(fixture);
       setSelectedSlug(fixture.slug);
       setFormValues(values);
-      if (analyze) runAnalysis(values, fixture);
+      if (analyze) runAnalysis(values, fixture, "fixture");
     },
     [runAnalysis],
   );
@@ -276,14 +293,14 @@ function HomePageContent() {
         if (defaultFixture) {
           applyFixture(defaultFixture);
         } else {
-          runAnalysis(FALLBACK_FORM, null);
+          runAnalysis(FALLBACK_FORM, null, "fixture");
         }
       } catch (err) {
         if (cancelled) return;
         setFixturesError(
           err instanceof Error ? err.message : "Could not load World Cup fixtures",
         );
-        runAnalysis(FALLBACK_FORM, null);
+        runAnalysis(FALLBACK_FORM, null, "fixture");
       } finally {
         if (!cancelled) setFixturesLoading(false);
       }
@@ -340,6 +357,8 @@ function HomePageContent() {
   const locks = siblingMarkets ? detectLocks(siblingMarkets) : [];
 
   const activeFixture = fixtures.find((f) => f.slug === selectedSlug) ?? null;
+  const isFormDirty =
+    analyzedSnapshot != null && formSnapshot(formValues) !== analyzedSnapshot;
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
@@ -374,15 +393,28 @@ function HomePageContent() {
           loading={loading}
           selectedSlug={selectedSlug}
           values={formValues}
+          analysisSource={analysisMeta?.source ?? null}
+          isDirty={isFormDirty}
+          lastUpdatedAt={analysisMeta?.at ?? null}
+          liveAuto={liveAuto}
           onChange={setFormValues}
           onFixtureSelect={(fixture) => applyFixture(fixture, true)}
           onSubmit={(values) => {
             setFormValues(values);
-            runAnalysis(values, activeFixture);
+            runAnalysis(values, activeFixture, "manual");
           }}
         />
 
         <div className="min-w-0 space-y-5">
+          <div className="hidden lg:block">
+            <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+              Output
+            </p>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Read-only fair value · updates on fixture change, manual edits, or live
+              polling
+            </p>
+          </div>
           {error && (
             <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
               {error}
@@ -400,7 +432,11 @@ function HomePageContent() {
           />
           {analysis ? (
             <>
-              <AnalysisResults analysis={analysis} />
+              <AnalysisResults
+                analysis={analysis}
+                analysisSource={analysisMeta?.source ?? null}
+                lastUpdatedAt={analysisMeta?.at ?? null}
+              />
               {Object.keys(entryPrices).length > 0 ? (
                 <LiveClvPanel
                   entryPrices={entryPrices}
@@ -479,11 +515,11 @@ function LiveControls({
               enabled ? "animate-pulse bg-white" : "bg-cyan-950"
             }`}
           />
-          {enabled ? "Stop live" : "Go live (auto)"}
+          {enabled ? "Stop live" : "Go live (auto-recalc)"}
         </button>
         <div className="text-sm text-[var(--muted)]">
           {disabled ? (
-            "Select a World Cup fixture to enable live auto-refresh"
+            "Select a World Cup fixture first"
           ) : enabled ? (
             live ? (
               <span>
@@ -503,7 +539,7 @@ function LiveControls({
               "Waiting for live match state…"
             )
           ) : (
-            "Pulls ESPN score/minute + Polymarket odds every 20s"
+            "ESPN score + Polymarket odds every 20s — overrides manual in-play fields"
           )}
         </div>
       </div>
