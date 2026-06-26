@@ -20,6 +20,8 @@ export interface MatchFormValues {
   redAway: string;
 }
 
+export type AnalysisSource = "fixture" | "manual" | "live";
+
 interface MatchFormProps {
   values: MatchFormValues;
   loading: boolean;
@@ -27,6 +29,10 @@ interface MatchFormProps {
   fixturesLoading?: boolean;
   fixturesError?: string | null;
   selectedSlug?: string | null;
+  isDirty?: boolean;
+  analysisSource?: AnalysisSource | null;
+  lastUpdatedAt?: string | null;
+  liveAuto?: boolean;
   onChange: (values: MatchFormValues) => void;
   onFixtureSelect?: (fixture: FwcFixture) => void;
   onSubmit: (values: MatchFormValues) => void;
@@ -45,6 +51,10 @@ export function MatchForm({
   fixturesLoading = false,
   fixturesError = null,
   selectedSlug = null,
+  isDirty = false,
+  analysisSource = null,
+  lastUpdatedAt = null,
+  liveAuto = false,
   onChange,
   onFixtureSelect,
   onSubmit,
@@ -71,9 +81,9 @@ export function MatchForm({
     >
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Fixture</h2>
+          <h2 className="text-lg font-semibold tracking-tight">Inputs</h2>
           <p className="text-sm text-[var(--muted)]">
-            Elo prior → Dixon-Coles → de-vig edge
+            Pick a fixture to auto-run · edit fields to override
           </p>
         </div>
         <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--muted)]">
@@ -87,11 +97,26 @@ export function MatchForm({
         </label>
       </div>
 
+      <div className="mb-5 rounded-xl border border-[var(--border)] bg-black/20 px-3 py-2.5 text-xs leading-relaxed text-[var(--muted)]">
+        <span className="font-medium text-emerald-300/90">Pipeline</span>
+        <span className="mx-1.5 text-[var(--border)]">·</span>
+        Elo ratings → Dixon-Coles scoreline matrix → H/D/A fair % vs de-vigged
+        Polymarket moneyline → edge + Kelly (read-only, DRY_RUN).
+      </div>
+
+      <InputStatus
+        analysisSource={analysisSource}
+        isDirty={isDirty}
+        lastUpdatedAt={lastUpdatedAt}
+        liveAuto={liveAuto}
+        loading={loading}
+      />
+
       {fixtures.length > 0 || fixturesLoading || fixturesError ? (
         <div className="mb-4">
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
-              FIFA World Cup 2026
+              1 · Fixture <span className="normal-case text-[var(--muted)]/70">(auto-runs on change)</span>
             </span>
             <select
               className="field"
@@ -115,6 +140,10 @@ export function MatchForm({
           ) : null}
         </div>
       ) : null}
+
+      <p className="mb-3 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+        2 · Teams &amp; moneyline odds
+      </p>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Home / Team A">
@@ -146,7 +175,7 @@ export function MatchForm({
       </datalist>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-3">
-        <Field label="Home odds">
+        <Field hint="Polymarket decimal" label="Home odds">
           <input
             className="field"
             inputMode="decimal"
@@ -158,7 +187,7 @@ export function MatchForm({
             onChange={(e) => update("homeOdds", e.target.value)}
           />
         </Field>
-        <Field label="Draw odds">
+        <Field hint="Polymarket decimal" label="Draw odds">
           <input
             className="field"
             inputMode="decimal"
@@ -170,7 +199,7 @@ export function MatchForm({
             onChange={(e) => update("drawOdds", e.target.value)}
           />
         </Field>
-        <Field label="Away odds">
+        <Field hint="Polymarket decimal" label="Away odds">
           <input
             className="field"
             inputMode="decimal"
@@ -185,6 +214,9 @@ export function MatchForm({
       </div>
 
       <div className="mt-5 rounded-xl border border-[var(--border)] bg-black/20 p-4">
+        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+          3 · In-play state <span className="normal-case text-[var(--muted)]/70">(optional)</span>
+        </p>
         <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
           <input
             checked={values.inPlay}
@@ -192,7 +224,7 @@ export function MatchForm({
             type="checkbox"
             onChange={(e) => update("inPlay", e.target.checked)}
           />
-          In-play mode
+          Conditional on current score &amp; minute
         </label>
         {values.inPlay ? (
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -252,13 +284,32 @@ export function MatchForm({
         ) : null}
       </div>
 
-      <button
-        className="mt-5 w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={loading}
-        type="submit"
-      >
-        {loading ? "Analyzing…" : "Run analysis"}
-      </button>
+      <div className="mt-5 space-y-2">
+        <button
+          className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed ${
+            isDirty && !liveAuto
+              ? "bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-60"
+              : "border border-[var(--border)] bg-black/20 text-[var(--muted)] hover:border-emerald-500/30 hover:text-emerald-200 disabled:opacity-50"
+          }`}
+          disabled={loading || liveAuto || (!isDirty && !loading)}
+          type="submit"
+        >
+          {loading
+            ? "Recalculating…"
+            : liveAuto
+              ? "Live mode — auto-recalculating"
+              : isDirty
+                ? "Apply manual edits"
+                : "Inputs match latest run"}
+        </button>
+        <p className="text-center text-[11px] leading-relaxed text-[var(--muted)]">
+          {liveAuto
+            ? "Turn off Go live to apply manual overrides."
+            : isDirty
+              ? "You changed fields since the last run — click to refresh the panel."
+              : "Selecting a fixture runs the model automatically. Edit odds or in-play fields to enable this button."}
+        </p>
+      </div>
 
       <style jsx>{`
         .field {
@@ -286,17 +337,86 @@ function formatFixtureOption(fixture: FwcFixture): string {
   return `${fixture.home} vs ${fixture.away} · ${when}${status}`;
 }
 
+function InputStatus({
+  isDirty,
+  analysisSource,
+  lastUpdatedAt,
+  liveAuto,
+  loading,
+}: {
+  isDirty: boolean;
+  analysisSource: AnalysisSource | null;
+  lastUpdatedAt: string | null;
+  liveAuto: boolean;
+  loading: boolean;
+}) {
+  const updated = lastUpdatedAt
+    ? new Date(lastUpdatedAt).toLocaleTimeString()
+    : null;
+
+  const sourceLabel =
+    liveAuto && analysisSource === "live"
+      ? "Live feed"
+      : analysisSource === "fixture"
+        ? "Fixture load"
+        : analysisSource === "manual"
+          ? "Manual"
+          : null;
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      {loading ? (
+        <StatusPill tone="neutral">Recalculating…</StatusPill>
+      ) : isDirty ? (
+        <StatusPill tone="warn">Unsaved edits</StatusPill>
+      ) : (
+        <StatusPill tone="ok">Synced</StatusPill>
+      )}
+      {sourceLabel ? <StatusPill tone="neutral">{sourceLabel}</StatusPill> : null}
+      {updated ? (
+        <span className="text-[11px] text-[var(--muted)]">last run {updated}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function StatusPill({
+  children,
+  tone,
+}: {
+  children: React.ReactNode;
+  tone: "ok" | "warn" | "neutral";
+}) {
+  const styles =
+    tone === "ok"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+      : tone === "warn"
+        ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+        : "border-[var(--border)] bg-black/20 text-[var(--muted)]";
+
+  return (
+    <span
+      className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${styles}`}
+    >
+      {children}
+    </span>
+  );
+}
+
 function Field({
   label,
+  hint,
   children,
 }: {
   label: string;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
-        {label}
+      <span className="mb-1.5 flex items-baseline justify-between gap-2 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+        <span>{label}</span>
+        {hint ? <span className="normal-case text-[10px] text-[var(--muted)]/70">{hint}</span> : null}
       </span>
       {children}
     </label>

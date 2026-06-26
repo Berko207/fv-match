@@ -1,9 +1,12 @@
 import type { MatchAnalysis, OutcomeView } from "@/core/engine";
 
 import { ColumnHelp } from "@/components/ColumnHelp";
+import type { AnalysisSource } from "@/components/MatchForm";
 
 interface AnalysisResultsProps {
   analysis: MatchAnalysis;
+  analysisSource?: AnalysisSource | null;
+  lastUpdatedAt?: string | null;
 }
 
 const COLUMN_HELP: Array<{
@@ -20,27 +23,27 @@ const COLUMN_HELP: Array<{
   },
   {
     key: "model",
-    label: "Model",
+    label: "Fair %",
     align: "right",
-    help: "Model win probability from Dixon-Coles + Elo (our fair-value estimate).",
+    help: "Model win probability — Dixon-Coles + Elo fair value (what we think is true).",
   },
   {
     key: "fair",
-    label: "Fair",
+    label: "Fair odds",
     align: "right",
-    help: "Fair decimal odds implied by the model: 1 ÷ model probability.",
+    help: "Decimal odds implied by the model: 1 ÷ fair probability.",
   },
   {
     key: "market",
-    label: "Market",
+    label: "Mkt odds",
     align: "right",
-    help: "Raw decimal odds from Polymarket (or your manual input) before removing vig.",
+    help: "Raw Polymarket decimal odds (or your manual input) before vig is removed.",
   },
   {
     key: "consensus",
-    label: "Consensus",
+    label: "De-vig %",
     align: "right",
-    help: "De-vigged market probability — the book’s implied true chance after margin is removed.",
+    help: "De-vigged market probability — implied true chance after book margin is stripped.",
   },
   {
     key: "edge",
@@ -62,7 +65,11 @@ const COLUMN_HELP: Array<{
   },
 ];
 
-export function AnalysisResults({ analysis }: AnalysisResultsProps) {
+export function AnalysisResults({
+  analysis,
+  analysisSource = null,
+  lastUpdatedAt = null,
+}: AnalysisResultsProps) {
   const labels: Record<string, string> = {
     home: analysis.home,
     draw: "Draw",
@@ -116,16 +123,25 @@ export function AnalysisResults({ analysis }: AnalysisResultsProps) {
         </div>
 
         <div className="grid gap-4 p-5 sm:grid-cols-3 sm:p-6">
-          <ProbCard label={analysis.home} value={analysis.pHome} tone="home" />
-          <ProbCard label="Draw" value={analysis.pDraw} tone="draw" />
-          <ProbCard label={analysis.away} value={analysis.pAway} tone="away" />
+          <ProbCard label={analysis.home} sublabel="Fair value (model)" value={analysis.pHome} tone="home" />
+          <ProbCard label="Draw" sublabel="Fair value (model)" value={analysis.pDraw} tone="draw" />
+          <ProbCard label={analysis.away} sublabel="Fair value (model)" value={analysis.pAway} tone="away" />
         </div>
       </section>
 
       <section className="glass rounded-2xl p-5 sm:p-6">
-        <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
-          Model vs Market
-        </h3>
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
+              Edge table · fair vs de-vigged market
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">
+              Compare model fair % to de-vigged Polymarket %. Edge = fair − de-vig; Kelly
+              stake only when edge clears the 3% gate.
+            </p>
+          </div>
+          <ResultsMeta analysisSource={analysisSource} lastUpdatedAt={lastUpdatedAt} />
+        </div>
         <div className="overflow-x-auto pb-1 pt-8">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
@@ -151,9 +167,12 @@ export function AnalysisResults({ analysis }: AnalysisResultsProps) {
 
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="glass rounded-2xl p-5 sm:p-6">
-          <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
-            Probability comparison
+          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
+            Probability gap
           </h3>
+          <p className="mb-4 text-xs text-[var(--muted)]">
+            Visual delta — emerald = model fair value, slate = de-vigged market.
+          </p>
           <div className="space-y-4">
             {analysis.outcomes.map((row) => (
               <CompareBar
@@ -239,10 +258,12 @@ function ColumnHeader({
 
 function ProbCard({
   label,
+  sublabel,
   value,
   tone,
 }: {
   label: string;
+  sublabel: string;
   value: number;
   tone: "home" | "draw" | "away";
 }) {
@@ -257,6 +278,7 @@ function ProbCard({
       className={`rounded-xl border bg-gradient-to-br p-4 ${colors[tone]}`}
     >
       <p className="text-xs uppercase tracking-wide text-[var(--muted)]">{label}</p>
+      <p className="mt-0.5 text-[10px] text-[var(--muted)]/70">{sublabel}</p>
       <p className="mt-1 text-3xl font-bold tabular-nums">{(value * 100).toFixed(1)}%</p>
       <p className="mt-1 font-mono text-xs text-[var(--muted)]">
         fair {(value > 0 ? 1 / value : 0).toFixed(2)}
@@ -327,14 +349,14 @@ function CompareBar({
       <div className="mb-1.5 flex items-center justify-between text-sm">
         <span>{label}</span>
         <span className="font-mono text-xs text-[var(--muted)]">
-          model {(modelP * 100).toFixed(1)}%
-          {consensusP != null ? ` · mkt ${(consensusP * 100).toFixed(1)}%` : ""}
+          fair {(modelP * 100).toFixed(1)}%
+          {consensusP != null ? ` · de-vig ${(consensusP * 100).toFixed(1)}%` : ""}
         </span>
       </div>
       <div className="space-y-1.5">
-        <Bar color="bg-emerald-400" label="Model" value={modelP / max} />
+        <Bar color="bg-emerald-400" label="Fair" value={modelP / max} />
         {consensusP != null && (
-          <Bar color="bg-slate-400" label="Market" value={consensusP / max} />
+          <Bar color="bg-slate-400" label="De-vig" value={consensusP / max} />
         )}
       </div>
     </div>
@@ -361,6 +383,35 @@ function Bar({
           style={{ width: `${Math.max(2, value * 100)}%` }}
         />
       </div>
+    </div>
+  );
+}
+
+function ResultsMeta({
+  analysisSource,
+  lastUpdatedAt,
+}: {
+  analysisSource: AnalysisSource | null;
+  lastUpdatedAt: string | null;
+}) {
+  if (!analysisSource && !lastUpdatedAt) return null;
+
+  const sourceLabel =
+    analysisSource === "live"
+      ? "Live refresh"
+      : analysisSource === "fixture"
+        ? "Auto on fixture"
+        : analysisSource === "manual"
+          ? "Manual recalc"
+          : null;
+  const updated = lastUpdatedAt
+    ? new Date(lastUpdatedAt).toLocaleTimeString()
+    : null;
+
+  return (
+    <div className="text-right text-[11px] text-[var(--muted)]">
+      {sourceLabel ? <div className="font-medium text-emerald-300/90">{sourceLabel}</div> : null}
+      {updated ? <div>updated {updated}</div> : null}
     </div>
   );
 }
